@@ -8,6 +8,7 @@ from .solvers import *
 from .time_array import *
 from .utils import *
 from .mcsolve import *
+from .grape import *
 
 # get version from pyproject.toml
 __version__ = version(__package__)
