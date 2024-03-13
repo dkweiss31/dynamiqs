@@ -5,10 +5,11 @@ import dynamiqs as dq
 import jax.numpy as jnp
 import numpy as np
 from jax.random import PRNGKey
-from dynamiqs import timecallable, grape, GRAPEOptions
+from dynamiqs import timecallable, grape, Options
 from quantum_utils import generate_file_path, extract_info_from_h5
 from jax_cosmo.scipy.interpolate import InterpolatedUnivariateSpline
 from dynamiqs.solver import Dopri5, Tsit5
+import optax
 
 import qutip as qt
 
@@ -29,8 +30,8 @@ bandwidth = 0.2
 N_cutoff = int(bandwidth * len(tsave) / 2)
 rng_key = PRNGKey(4223223325)
 save_filepath = generate_file_path("h5py", "test_grape_drag_freq", "out")
-options = GRAPEOptions(target_fidelity=0.9995,
-                       learning_rate=0.01, epochs=10000, coherent=True)
+options = Options(target_fidelity=0.9995, epochs=10000, coherent=True)
+optimizer = optax.adam(learning_rate=0.01, b1=0.999, b2=0.999)
 
 
 def ringup_envelope(N_ringup, times):
@@ -113,6 +114,7 @@ if run_grape:
         tsave=tsave,
         params_to_optimize=grape_params,
         filepath=save_filepath,
+        optimizer=optimizer,
         solver=Tsit5(),
         options=options
     )

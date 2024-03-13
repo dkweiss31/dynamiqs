@@ -10,7 +10,7 @@ import optax
 from .._utils import cdtype
 import time
 
-from ..solver import Solver
+from ..solver import Solver, Tsit5
 from dynamiqs.utils.fidelity import infidelity_coherent, infidelity_incoherent
 import dynamiqs as dq
 from dynamiqs import Options
@@ -26,13 +26,39 @@ def grape(
     target_states: ArrayLike,
     tsave: ArrayLike,
     params_to_optimize: ArrayLike,
-    filepath: str,
-    solver: Solver,
+    *,
+    filepath: str = "tmp.h5py",
+    optimizer: optax.GradientTransformation = optax.adam(0.1, b1=0.99, b2=0.99),
+    solver: Solver = Tsit5(),
     options: Options = Options(),
 ):
+    r"""Perform gradient descent to optimize Hamiltonian parameters
+
+        This function takes as input a list of initial_states and a list of
+        target_states, and optimizes params_to_optimize to achieve the highest fidelity
+        state transfer.
+
+        Args:
+             H _(CallableTimeArray object)_: Hamiltonian
+             initial_states _(list of array-like of shape (n, 1))_: initial states
+             target_states _(list of array-like of shape (n, 1))_: target states
+             tsave _(array-like of shape (nt,))_: times to be passed to sesolve
+             params_to_optimize _(dict or array-like)_: parameters to optimize
+                over that are used to define the Hamiltonian
+             filepath _(str)_: filepath of where to save optimization results
+             optimizer _(optax.GradientTransformation)_: optax optimizer to use
+                for gradient descent. Defaults to the Adam optimizer
+             solver _(Solver)_: solver passed to sesolve
+             options _(Options)_: options for grape optimization and sesolve integration
+                relevant options include:
+                    coherent, bool where if True we use a definition of fidelity
+                    that includes relative phases, if not it ignores relative phases
+                    epochs, int that is the maximum number of epochs to loop over
+                    target_fidelity, float where the optimization terminates if the fidelity
+                    if above this value
+        """
     initial_states = jnp.asarray(initial_states, dtype=cdtype())
     target_states = jnp.asarray(target_states, dtype=cdtype())
-    optimizer = optax.adam(options.learning_rate, b1=options.b1, b2=options.b2)
     opt_state = optimizer.init(params_to_optimize)
     init_param_dict = options.__dict__ | {"tsave": tsave}
     print(f"saving results to {filepath}")
