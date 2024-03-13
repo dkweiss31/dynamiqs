@@ -17,7 +17,7 @@ from dynamiqs import Options
 from ..time_array import timecallable, CallableTimeArray
 from quantum_utils import write_to_h5_multi, append_to_h5
 
-__all__ = ['grape']
+__all__ = ["grape"]
 
 
 def grape(
@@ -40,11 +40,25 @@ def grape(
         for epoch in range(options.epochs):
             epoch_start_time = time.time()
             params_to_optimize, opt_state, infids = step(
-                params_to_optimize, opt_state, H, initial_states,
-                target_states, tsave, solver, options, optimizer
+                params_to_optimize,
+                opt_state,
+                H,
+                initial_states,
+                target_states,
+                tsave,
+                solver,
+                options,
+                optimizer,
             )
             data_dict = {"infidelities": infids}
-            save_and_print(filepath, data_dict, params_to_optimize, init_param_dict, epoch, epoch_start_time)
+            save_and_print(
+                filepath,
+                data_dict,
+                params_to_optimize,
+                init_param_dict,
+                epoch,
+                epoch_start_time,
+            )
             if any(infids < 1 - options.target_fidelity):
                 print("target fidelity reached")
                 break
@@ -55,35 +69,46 @@ def grape(
 
 
 def save_and_print(
-        filepath: str,
-        data_dict: dict,
-        params_to_optimize: ArrayLike | dict,
-        init_param_dict: dict,
-        epoch: int = 0,
-        prev_time: float = 0.0
+    filepath: str,
+    data_dict: dict,
+    params_to_optimize: ArrayLike | dict,
+    init_param_dict: dict,
+    epoch: int = 0,
+    prev_time: float = 0.0,
 ):
     infidelities = data_dict["infidelities"]
     if type(params_to_optimize) is dict:
         data_dict = data_dict | params_to_optimize
     else:
         data_dict["opt_params"] = params_to_optimize
-    print(f"epoch: {epoch}, fids: {1 - infidelities},"
-          f" elapsed_time: {np.around(time.time() - prev_time, decimals=3)} s")
+    print(
+        f"epoch: {epoch}, fids: {1 - infidelities},"
+        f" elapsed_time: {np.around(time.time() - prev_time, decimals=3)} s"
+    )
     if epoch != 0:
         append_to_h5(filepath, data_dict)
     else:
         write_to_h5_multi(filepath, data_dict, init_param_dict)
 
 
-@partial(jax.jit, static_argnames=('solver', 'options', 'optimizer'))
-def step(params_to_optimize, opt_state, H, initial_states,
-         target_states, tsave, solver, options, optimizer,
-         ):
+@partial(jax.jit, static_argnames=("solver", "options", "optimizer"))
+def step(
+    params_to_optimize,
+    opt_state,
+    H,
+    initial_states,
+    target_states,
+    tsave,
+    solver,
+    options,
+    optimizer,
+):
     """calculate gradient of the loss and step updated parameters.
     We have has_aux=True because loss also returns the infidelities on the side
     (want to save those numbers as they give info on which pulse was best)"""
-    grads, infids = jax.grad(loss, has_aux=True)(params_to_optimize, H, initial_states,
-                                                 target_states, tsave, solver, options)
+    grads, infids = jax.grad(loss, has_aux=True)(
+        params_to_optimize, H, initial_states, target_states, tsave, solver, options
+    )
     updates, opt_state = optimizer.update(grads, opt_state)
     params_to_optimize = optax.apply_updates(params_to_optimize, updates)
     return params_to_optimize, opt_state, infids
