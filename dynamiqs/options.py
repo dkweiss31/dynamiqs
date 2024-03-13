@@ -4,8 +4,39 @@ import equinox as eqx
 import jax
 from jax import Array
 from jaxtyping import PyTree, Scalar
+from jax.random import PRNGKey
 
-__all__ = ['Options']
+__all__ = ['Options', 'GRAPEOptions']
+
+
+class GRAPEOptions(eqx.Module):
+    target_fidelity: float
+    learning_rate: float
+    epochs: int
+    coherent: bool
+
+    def __init__(
+        self,
+        target_fidelity: float = 0.9995,
+        learning_rate: float = 0.01,
+        epochs: int = 1000,
+        coherent: bool = True,
+    ):
+        """ Generic options for GRAPE
+
+        Args:
+            N_multistart: number of batches to optimize over simultaneously
+            target_fidelity: if this fidelity is reached, stop optimization
+            learning_rate: learning rate for Adam optimizer
+            epochs: number of epochs to loop over
+            coherent: If true, use coherent definition of the fidelity which
+                      accounts for relative phases. If not, use incoherent
+                      definition
+        """
+        self.target_fidelity = target_fidelity
+        self.learning_rate = learning_rate
+        self.epochs = epochs
+        self.coherent = coherent
 
 
 class Options(eqx.Module):

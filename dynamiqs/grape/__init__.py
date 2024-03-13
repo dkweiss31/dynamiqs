@@ -1,1 +1,1 @@
-from .grape import GRAPE
+from .grape import grape
