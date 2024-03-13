@@ -1,11 +1,11 @@
+import jax.numpy as jnp
 import matplotlib.pyplot as plt
+import numpy as np
 import optax
 from jax_cosmo.scipy.interpolate import InterpolatedUnivariateSpline
 
 import dynamiqs as dq
-import jax.numpy as jnp
-import numpy as np
-from dynamiqs import timecallable, grape, Options
+from dynamiqs import Options, grape, timecallable
 from dynamiqs.utils.file_io import generate_file_path
 
 N = 5

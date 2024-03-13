@@ -1,18 +1,17 @@
+import jax.numpy as jnp
 import matplotlib.pyplot as plt
+import numpy as np
+import optax
+from jax.random import PRNGKey
+from jax.tree_util import Partial
+from jax_cosmo.scipy.interpolate import InterpolatedUnivariateSpline
+from quantum_utils import extract_info_from_h5, generate_file_path
 
 import dynamiqs as dq
-import jax.numpy as jnp
-import numpy as np
-from jax.random import PRNGKey
-from dynamiqs import timecallable, grape, Options
-from dynamiqs.grape.grape_utils import H_evaluated_at_t, get_IQ_time_series, randomize_and_set_IQ_vars
-from jax.tree_util import Partial
-from quantum_utils import generate_file_path, extract_info_from_h5
-from jax_cosmo.scipy.interpolate import InterpolatedUnivariateSpline
+from dynamiqs import Options, grape, timecallable
+from dynamiqs.grape.grape_utils import (H_evaluated_at_t, get_IQ_time_series,
+                                        randomize_and_set_IQ_vars)
 from dynamiqs.solver import Dopri5, Tsit5
-import optax
-
-
 
 N = 8
 Kerr = 2.0 * jnp.pi * 0.130

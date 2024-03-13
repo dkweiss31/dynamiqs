@@ -1,21 +1,22 @@
 from __future__ import annotations
 
-import jax
+import time
 from functools import partial
+
+import jax
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
 import numpy as np
 import optax
+from jaxtyping import ArrayLike
 
-from .._utils import cdtype
-import time
-
-from ..solver import Solver, Tsit5
-from dynamiqs.utils.fidelity import infidelity_coherent, infidelity_incoherent
 import dynamiqs as dq
 from dynamiqs import Options
-from ..time_array import timecallable, CallableTimeArray
-from dynamiqs.utils.file_io import write_to_h5_multi, append_to_h5
+from dynamiqs.utils.fidelity import infidelity_coherent, infidelity_incoherent
+from dynamiqs.utils.file_io import append_to_h5, write_to_h5_multi
+
+from .._utils import cdtype
+from ..solver import Solver, Tsit5
+from ..time_array import CallableTimeArray, timecallable
 
 __all__ = ["grape"]
 
