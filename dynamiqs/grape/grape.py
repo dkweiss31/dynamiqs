@@ -15,7 +15,7 @@ from dynamiqs.utils.fidelity import infidelity_coherent, infidelity_incoherent
 import dynamiqs as dq
 from dynamiqs import Options
 from ..time_array import timecallable, CallableTimeArray
-from quantum_utils import write_to_h5_multi, append_to_h5
+from dynamiqs.utils.file_io import write_to_h5_multi, append_to_h5
 
 __all__ = ["grape"]
 
@@ -31,12 +31,13 @@ def grape(
     optimizer: optax.GradientTransformation = optax.adam(0.1, b1=0.99, b2=0.99),
     solver: Solver = Tsit5(),
     options: Options = Options(),
-):
+) -> ArrayLike:
     r"""Perform gradient descent to optimize Hamiltonian parameters
 
         This function takes as input a list of initial_states and a list of
         target_states, and optimizes params_to_optimize to achieve the highest fidelity
-        state transfer.
+        state transfer. It saves the parameters from every epoch and the associated fidelity
+        in the file filepath
 
         Args:
              H _(CallableTimeArray object)_: Hamiltonian
@@ -56,6 +57,8 @@ def grape(
                     epochs, int that is the maximum number of epochs to loop over
                     target_fidelity, float where the optimization terminates if the fidelity
                     if above this value
+        Returns:
+            optimized parameters from the final timestep
         """
     initial_states = jnp.asarray(initial_states, dtype=cdtype())
     target_states = jnp.asarray(target_states, dtype=cdtype())
@@ -89,9 +92,11 @@ def grape(
                 print("target fidelity reached")
                 break
         print(f"all results saved to {filepath}")
+        return params_to_optimize
     except KeyboardInterrupt:
         print("terminated on keyboard interrupt")
         print(f"all results saved to {filepath}")
+        return params_to_optimize
 
 
 def save_and_print(
