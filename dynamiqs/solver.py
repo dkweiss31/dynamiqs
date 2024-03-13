@@ -6,7 +6,7 @@ import equinox as eqx
 
 from .gradient import Autograd, CheckpointAutograd, Gradient
 
-__all__ = ['Propagator', 'Euler', 'Rouchon1', 'Rouchon2', 'Dopri5', 'Dopri8', 'Tsit5']
+__all__ = ['Propagator', 'Euler', 'Rouchon1', 'Rouchon2', 'Dopri5', 'Dopri8', 'Tsit5', 'Solver']
 
 
 # === generic solvers options

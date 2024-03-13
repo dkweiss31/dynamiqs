@@ -13,7 +13,7 @@ from jaxtyping import ArrayLike, PyTree, Scalar
 
 from ._utils import cdtype, check_time_array, obj_type_str
 
-__all__ = ['constant', 'pwc', 'modulated', 'timecallable', 'TimeArray']
+__all__ = ['constant', 'pwc', 'modulated', 'timecallable', 'TimeArray', 'CallableTimeArray']
 
 
 def constant(array: ArrayLike) -> ConstantTimeArray:
@@ -242,6 +242,9 @@ class TimeArray(eqx.Module):
     def __str__(self) -> str:
         return self.__repr__()
 
+    def update_args(self, args) -> TimeArray:
+        """update arguments"""
+
 
 class ConstantTimeArray(TimeArray):
     x: Array
@@ -282,6 +285,9 @@ class ConstantTimeArray(TimeArray):
             return SummedTimeArray([self, other])
         else:
             return NotImplemented
+
+    def update_args(self, args) -> TimeArray:
+        return ConstantTimeArray(args)
 
 
 class PWCTimeArray(TimeArray):
@@ -344,6 +350,9 @@ class PWCTimeArray(TimeArray):
         else:
             return NotImplemented
 
+    def update_args(self, args):
+        return PWCTimeArray(self.times, args, self.array)
+
 
 class ModulatedTimeArray(TimeArray):
     f: callable[[float, ...], Array]  # (...,)
@@ -394,6 +403,9 @@ class ModulatedTimeArray(TimeArray):
         else:
             return NotImplemented
 
+    def update_args(self, args):
+        return ModulatedTimeArray(self.f, self.array, args)
+
 
 class CallableTimeArray(TimeArray):
     f: callable[[float, ...], Array]
@@ -439,6 +451,9 @@ class CallableTimeArray(TimeArray):
             return SummedTimeArray([self, other])
         else:
             return NotImplemented
+
+    def update_args(self, args):
+        return CallableTimeArray(self.f, args)
 
 
 class SummedTimeArray(TimeArray):

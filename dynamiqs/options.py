@@ -4,39 +4,8 @@ import equinox as eqx
 import jax
 from jax import Array
 from jaxtyping import PyTree, Scalar
-from jax.random import PRNGKey
 
-__all__ = ['Options', 'GRAPEOptions']
-
-
-class GRAPEOptions(eqx.Module):
-    target_fidelity: float
-    learning_rate: float
-    epochs: int
-    coherent: bool
-
-    def __init__(
-        self,
-        target_fidelity: float = 0.9995,
-        learning_rate: float = 0.01,
-        epochs: int = 1000,
-        coherent: bool = True,
-    ):
-        """ Generic options for GRAPE
-
-        Args:
-            N_multistart: number of batches to optimize over simultaneously
-            target_fidelity: if this fidelity is reached, stop optimization
-            learning_rate: learning rate for Adam optimizer
-            epochs: number of epochs to loop over
-            coherent: If true, use coherent definition of the fidelity which
-                      accounts for relative phases. If not, use incoherent
-                      definition
-        """
-        self.target_fidelity = target_fidelity
-        self.learning_rate = learning_rate
-        self.epochs = epochs
-        self.coherent = coherent
+__all__ = ['Options']
 
 
 class Options(eqx.Module):
@@ -45,6 +14,12 @@ class Options(eqx.Module):
     cartesian_batching: bool
     t0: Scalar | None
     save_extra: callable[[Array], PyTree] | None
+    target_fidelity: float
+    learning_rate: float
+    b1: float
+    b2: float
+    epochs: int
+    coherent: bool
 
     def __init__(
         self,
@@ -53,6 +28,12 @@ class Options(eqx.Module):
         cartesian_batching: bool = True,
         t0: Scalar | None = None,
         save_extra: callable[[Array], PyTree] | None = None,
+        target_fidelity: float = 0.9995,
+        learning_rate: float = 0.01,
+        b1: float = 0.9999,
+        b2: float = 0.9999,
+        epochs: int = 1000,
+        coherent: bool = True,
     ):
         """Generic options for the quantum solvers.
 
@@ -69,6 +50,13 @@ class Options(eqx.Module):
                 `f(Array) -> PyTree` that takes a state as input and returns a PyTree.
                 This can be used to save additional arbitrary data during the
                 integration.
+            target_fidelity: if this fidelity is reached, stop grape optimization
+            learning_rate: learning rate for Adam optimizer
+            b1, b2: decay rates for Adam optimizer
+            epochs: number of epochs to loop over in grape
+            coherent: If true, use coherent definition of the fidelity which
+                      accounts for relative phases. If not, use incoherent
+                      definition
         """
         self.save_states = save_states
         self.verbose = verbose
@@ -79,3 +67,9 @@ class Options(eqx.Module):
             self.save_extra = jax.tree_util.Partial(save_extra)
         else:
             self.save_extra = save_extra
+        self.target_fidelity = target_fidelity
+        self.learning_rate = learning_rate
+        self.b1 = b1
+        self.b2 = b2
+        self.epochs = epochs
+        self.coherent = coherent
