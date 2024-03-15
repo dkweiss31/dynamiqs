@@ -11,12 +11,13 @@ import dynamiqs as dq
 from dynamiqs import Options, grape, timecallable
 from dynamiqs._utils import cdtype
 from dynamiqs.utils.file_io import generate_file_path
+from dynamiqs.utils.fidelity import infidelity_coherent
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="TorchQOC sim of second order bin code")
     parser.add_argument("--idx", default=-1, type=int, help="idx to scan over")
-    parser.add_argument("--gate", default="X_piby2", type=str,
+    parser.add_argument("--gate", default="prep", type=str,
                         help="type of gate. Can be X_pi, X_piby2, error_recovery, prep, prep_pm")
     parser.add_argument("--c_dim", default=9, type=int, help="hilbert dim cutoff")
     parser.add_argument("--EJ", default=22.0, type=float, help="qubit EJ")
@@ -29,7 +30,7 @@ if __name__ == "__main__":
     parser.add_argument("--learning_rate", default=0.01, type=float, help="learning rate for ADAM optimize")
     parser.add_argument("--b1", default=0.999, type=float, help="decay of learning rate first moment")
     parser.add_argument("--b2", default=0.999, type=float, help="decay of learning rate second moment")
-    parser.add_argument("--coherent", default=0, type=int, help="which fidelity metric to use")
+    parser.add_argument("--coherent", default=1, type=int, help="which fidelity metric to use")
     parser.add_argument("--epochs", default=1000, type=int, help="number of epochs")
     parser.add_argument("--target_fidelity", default=0.9995, type=float, help="target fidelity")
     parser.add_argument("--rng_seed", default=873545436259, type=int, help="rng seed for random initial pulses")
@@ -131,19 +132,13 @@ if __name__ == "__main__":
 
     if args.plot:
 
-        def H_func_bare(t, drive_params):
-            H = H0_bare
-            for drive_idx in range(len(H1)):
-                I_spline, Q_spline = _I_Q_splines(drive_params, drive_idx)
-                H = H + (jnp.cos(2.0 * np.pi * drive_freqs[drive_idx] * t) * I_spline(t)
-                         + jnp.sin(2.0 * np.pi * drive_freqs[drive_idx] * t) * Q_spline(t)) * H1[drive_idx]
-            return H
-
-        H_bare = timecallable(H_func_bare, args=(opt_params, ))
         finer_times = jnp.linspace(0.0, args.time, 201)
-        res_bare = dq.sesolve(H_bare, initial_states, finer_times,
+        H_ideal = timecallable(H_func, args=(opt_params,))
+        res_bare = dq.sesolve(H_ideal, initial_states, finer_times,
                               exp_ops=[dq.basis(c_dim, i) @ dq.tobra(dq.basis(c_dim, i)) for i in range(c_dim)]
                               )
+        infid = infidelity_coherent(res_bare.states[..., -1, :, :], jnp.asarray(final_states, dtype=cdtype()))
+        print(f"verified fidelity of {1 - infid}")
         fig, ax = plt.subplots()
         for drive_idx in range(len(H1)):
             I_spline, _ = _I_Q_splines(opt_params, drive_idx)
