@@ -9,6 +9,7 @@ from jax.random import PRNGKey
 from jax import Array
 from jaxtyping import ArrayLike
 
+from .. import norm
 from .._utils import cdtype
 from ..core._utils import _astimearray, compute_vmap, get_solver_class
 from ..gradient import Gradient
@@ -16,7 +17,7 @@ from ..options import Options
 from ..result import Result
 from ..solver import Dopri5, Dopri8, Euler, Solver, Tsit5
 from ..time_array import TimeArray
-from ..utils.utils import unit, dag
+from ..utils.utils import unit, dag, mpow
 from .mcdiffrax import MCDopri5, MCDopri8, MCEuler, MCTsit5
 
 __all__ = ['mcsolve']
@@ -151,26 +152,49 @@ def _mcsolve(
     gradient: Gradient | None,
     options: Options,
 ) -> Result:
+    # TODO split earlier so that not reusing key for different batch dimensions
     key_1, key_2, key_3 = jax.random.split(key, num=3)
     # simulate no-jump trajectory
     rand0 = jnp.zeros(shape=(1, 1))
-    no_jump_state = _single_traj(H, jump_ops, psi0, tsave, key_1, rand0, exp_ops, solver, gradient, options)
+    no_jump_res = _single_traj(H, jump_ops, psi0, tsave, rand0, exp_ops, solver, gradient, options)
+    # we have previously vmapped over batch dimensions
+    # also want to exclude random number (which should be zero here)
+    no_jump_state = no_jump_res.states[-1, 0:-1]
     # extract the no-jump probability
-    no_jump_state_sq = jnp.squeeze(no_jump_state[0:-1])
-    p_nojump = jnp.conj(no_jump_state_sq) @ no_jump_state_sq
-    # split key into ntraj keys
-    # TODO split earlier so that not reusing key for different batch dimensions
+    p_nojump = jnp.einsum("id,id->", jnp.conj(no_jump_state), no_jump_state)
+    # these random numbers define the moment when a jump occurs
     random_numbers = jax.random.uniform(key_2, shape=(ntraj, 1, 1), minval=p_nojump)
-    # run all single trajectories at once
-    # 0 indicates the dimension to vmap over. Here that is the random numbers along
-    # with their keys, which come along for the ride so that we can draw further random
-    # numbers for which jumps to apply
+    # these keys will be used to randomly sample a jump operator
     traj_keys = jax.random.split(key_3, num=ntraj)
-    run_trajs = jax.vmap(_single_traj, in_axes=(None, None, None, None, 0, 0, None, None, None, None),
-                         out_axes=0)
-    psis = run_trajs(H, jump_ops, psi0, tsave, traj_keys, random_numbers, exp_ops, solver, gradient, options)
-    #TODO return values don't fit into Result container
+    # run all single trajectories at once
+    f = jax.vmap(_jump_trajs, in_axes=(None, None, None, None, 0, 0, None, None, None, None))
+    psis = f(H, jump_ops, psi0, tsave, traj_keys, random_numbers, exp_ops, solver, gradient, options)
     return no_jump_state, psis, p_nojump
+
+
+def _jump_trajs(
+    H: ArrayLike | TimeArray,
+    jump_ops: list[ArrayLike | TimeArray],
+    psi0: ArrayLike,
+    tsave: ArrayLike,
+    key: PRNGKey,
+    rand: Array,
+    exp_ops: Array | None,
+    solver: Solver,
+    gradient: Gradient | None,
+    options: Options,
+):
+    res_before_jump = _single_traj(H, jump_ops, psi0, tsave, rand, exp_ops, solver, gradient, options)
+    t_jump = res_before_jump.final_time[0]
+    psi_before_jump = res_before_jump.states[-1, 0:-1]
+    jump_op = sample_jump_ops(t_jump, psi_before_jump, jump_ops, key)
+    psi_after_jump = unit(jump_op @ psi_before_jump)
+    #TODO again not right for exp_ops
+    new_tsave = jnp.linspace(t_jump, tsave[-1], 2)
+    # for now just including one jump
+    final_result = _single_traj(H, jump_ops, psi_after_jump, new_tsave,
+                                jnp.zeros(shape=(1, 1)), exp_ops, solver, gradient, options)
+    return res_before_jump, final_result
 
 
 @partial(jax.jit, static_argnames=('solver', 'gradient', 'options'))
@@ -179,50 +203,23 @@ def _single_traj(
     jump_ops: list[ArrayLike | TimeArray],
     psi0: ArrayLike,
     tsave: ArrayLike,
-    key: PRNGKey,
-    rand: float,
+    rand: Array,
     exp_ops: Array | None,
     solver: Solver,
     gradient: Gradient | None,
     options: Options,
 ):
-    def while_cond(t_state_key_solver):
-        t, state, key, solver = t_state_key_solver
-        return t < tsave[-1]
-
-    def while_body(t_state_key_solver):
-        t, state, key, solver = t_state_key_solver
-        next_r_key, sample_key, next_loop_key = jax.random.split(key, num=3)
-        solvers = {
-            Euler: MCEuler,
-            Dopri5: MCDopri5,
-            Dopri8: MCDopri8,
-            Tsit5: MCTsit5,
-        }
-        solver_class = get_solver_class(solvers, solver)
-        solver.assert_supports_gradient(gradient)
-        # TODO fix so that we compute exp_ops appropriately
-        new_tsave = jnp.linspace(t, tsave[-1], 2)
-        mcsolver = solver_class(new_tsave, state, H, exp_ops, solver, gradient, options, jump_ops)
-        # solve until jump
-        res = mcsolver.run()
-        t_jump = res.final_time[0]
-        state_before_jump = res.states[-1]
-        psi_before_jump = state_before_jump[0:-1]
-        # randomly sample one jump operator
-        jump_op = sample_jump_ops(t_jump, psi_before_jump, jump_ops, sample_key)
-        # only apply a jump if the solve terminated before the end
-        mask = jnp.where(t_jump < tsave[-1], jnp.array([1.0, ]), jnp.array([0.0, ]))
-        psi = unit(mask * jump_op @ psi_before_jump) + (1 - mask) * psi_before_jump
-        # new random key for the next round of the while loop
-        r = jax.random.uniform(next_r_key, shape=(1, 1))
-        state = jnp.concatenate((psi, r))
-        return t_jump, state, next_loop_key, solver
-
-    initial_state = jnp.concatenate((psi0, rand))
-    _, state, _, _ = while_loop(while_cond, while_body, (tsave[0], initial_state, key, solver),
-                                kind="checkpointed", max_steps=10)
-    return state
+    solvers = {
+        Euler: MCEuler,
+        Dopri5: MCDopri5,
+        Dopri8: MCDopri8,
+        Tsit5: MCTsit5,
+    }
+    solver_class = get_solver_class(solvers, solver)
+    solver.assert_supports_gradient(gradient)
+    state = jnp.concatenate((psi0, rand))
+    mcsolver = solver_class(tsave, state, H, exp_ops, solver, gradient, options, jump_ops)
+    return mcsolver.run()
 
 
 def sample_jump_ops(t, psi, jump_ops, key, eps=1e-15):

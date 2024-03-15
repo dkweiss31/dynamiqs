@@ -4,6 +4,7 @@ import os
 import dynamiqs as dq
 import jax.numpy as jnp
 from dynamiqs import timecallable
+from jax.random import PRNGKey
 import matplotlib.pyplot as plt
 from dynamiqs.solver import Dopri5, Dopri8, Euler, Propagator, Solver, Tsit5
 
@@ -29,6 +30,7 @@ result = dq.mcsolve(
     jump_ops,
     dq.basis(2, 0),
     tsave,
+    key=PRNGKey(4526),
     exp_ops=exp_ops,
     solver=Euler(dt=0.001),
 )
