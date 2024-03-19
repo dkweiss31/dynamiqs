@@ -17,16 +17,18 @@ from dynamiqs.utils.fidelity import infidelity_coherent
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="TorchQOC sim of second order bin code")
     parser.add_argument("--idx", default=-1, type=int, help="idx to scan over")
-    parser.add_argument("--gate", default="prep", type=str,
-                        help="type of gate. Can be X_pi, X_piby2, error_recovery, prep, prep_pm")
-    parser.add_argument("--c_dim", default=9, type=int, help="hilbert dim cutoff")
-    parser.add_argument("--EJ", default=22.0, type=float, help="qubit EJ")
-    parser.add_argument("--EC", default=0.15167, type=float, help="qubit EC")
+    parser.add_argument("--gate", default="parity", type=str,
+                        help="type of gate. Can be parity")
+    parser.add_argument("--c_dim_1", default=4, type=int, help="hilbert dim cutoff 1")
+    parser.add_argument("--EJ_1", default=21.22130, type=float, help="qubit 1 EJ")
+    parser.add_argument("--EC_1", default=0.15167, type=float, help="qubit 1 EC")
+    parser.add_argument("--c_dim_2", default=8, type=int, help="hilbert dim cutoff 2")
+    parser.add_argument("--EJ_2", default=22.01162, type=float, help="qubit 2 EJ")
+    parser.add_argument("--EC_2", default=0.15185, type=float, help="qubit 2 EC")
+    parser.add_argument("--g", default=0.00322, type=float, help="qudit-qudit coupling strength")
     parser.add_argument("--dt", default=5.0, type=float, help="time step for controls")
-    parser.add_argument("--time", default=50.0, type=float, help="gate time")
+    parser.add_argument("--time", default=1000.0, type=float, help="gate time")
     parser.add_argument("--scale", default=0.01, type=float, help="randomization scale for initial pulse")
-    # parser.add_argument("--bandwidth", default=1.0, type=float, help="pulse bandwidth, fraction of 1/dt/2")
-    # parser.add_argument("--ringup", default=1, type=int, help="number of timesteps dedicated to ringup")
     parser.add_argument("--learning_rate", default=0.01, type=float, help="learning rate for ADAM optimize")
     parser.add_argument("--b1", default=0.999, type=float, help="decay of learning rate first moment")
     parser.add_argument("--b2", default=0.999, type=float, help="decay of learning rate second moment")
@@ -35,14 +37,13 @@ if __name__ == "__main__":
     parser.add_argument("--target_fidelity", default=0.9995, type=float, help="target fidelity")
     parser.add_argument("--rng_seed", default=873545436259, type=int, help="rng seed for random initial pulses")
     parser.add_argument("--plot", default=True, type=bool, help="plot the results?")
-    # parser.add_argument("--initial_pulse_filepath", default=None,
-    #                     type=str, help="initial pulse filepath")
     args = parser.parse_args()
     if args.idx == -1:
         filename = generate_file_path("h5py", f"second_bin_mango_{args.gate}", "out")
     else:
         filename = f"out/{str(args.idx).zfill(5)}_second_bin_mango{args.gate}.h5py"
-    c_dim = args.c_dim
+    c_dim_1 = args.c_dim_1
+    c_dim_2 = args.c_dim_2
 
     optimizer = optax.adam(learning_rate=args.learning_rate, b1=args.b1, b2=args.b2)
     ntimes = int(args.time // args.dt) + 1
@@ -55,11 +56,20 @@ if __name__ == "__main__":
         coherent = True
     options = Options(target_fidelity=args.target_fidelity, epochs=args.epochs, coherent=coherent)
 
-    tmon = scq.Transmon(EJ=args.EJ, EC=args.EC, ng=0.0, ncut=41, truncated_dim=c_dim)
-    hilbert_space = scq.HilbertSpace([tmon])
+    tmon_1 = scq.Transmon(EJ=args.EJ_1, EC=args.EC_1, ng=0.0, ncut=41, truncated_dim=c_dim_1)
+    tmon_2 = scq.Transmon(EJ=args.EJ_2, EC=args.EC_2, ng=0.0, ncut=41, truncated_dim=c_dim_2)
+    hilbert_space = scq.HilbertSpace([tmon_1, tmon_2])
+    hilbert_space.add_interaction(
+        g=args.g,
+        op1=tmon_1.n_operator,
+        op2=tmon_2.n_operator,
+    )
     hilbert_space.generate_lookup()
+    bare_labels = [(i, j) for i in range(c_dim_1) for j in range(c_dim_2)]
+    dressed_labels_by_bare_labels = {}
+    for label in bare_labels:
+        dressed_labels_by_bare_labels[label] = hilbert_space.dressed_index(label)
     evals = hilbert_space["evals"][0]
-    E01 = evals[1] - evals[0]
     _H0_bare = 2.0 * np.pi * qt.Qobj(np.diag(evals - evals[0]))
     H0_bare = jnp.asarray(_H0_bare, dtype=cdtype())
     rot_frame_mat = 2.0 * np.pi * E01 * np.diag(np.arange(c_dim))
@@ -118,17 +128,7 @@ if __name__ == "__main__":
             H = H + (I_rotating_frame_w_drive * I_spline(t) + Q_rotating_frame_w_drive * Q_spline(t)) * H1[drive_idx]
         return H
 
-
-    def H_func_bare(t, drive_params):
-        H = H0_bare
-        for drive_idx in range(len(H1)):
-            I_spline, Q_spline = _I_Q_splines(drive_params, drive_idx)
-            H = H + (jnp.cos(2.0 * np.pi * drive_freqs[drive_idx] * t) * I_spline(t)
-                     + jnp.sin(2.0 * np.pi * drive_freqs[drive_idx] * t) * Q_spline(t)) * H1[drive_idx]
-        return H
-
     H = timecallable(H_func, args=(init_drive_params,))
-    # H = timecallable(H_func_bare, args=(init_drive_params,))
     opt_params = grape(
         H,
         initial_states=initial_states,
