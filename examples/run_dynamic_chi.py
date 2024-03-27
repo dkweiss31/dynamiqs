@@ -13,7 +13,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="dynamic chi sim")
     parser.add_argument("--idx", default=-1, type=int, help="idx to scan over")
     parser.add_argument("--gate", default="error_parity", type=str,
-                        help="type of gate. Can be error parity, ...")
+                        help="type of gate. Can be error_parity_g, error_parity_plus, ...")
     parser.add_argument("--c_dim", default=3, type=int, help="cavity hilbert dim cutoff")
     parser.add_argument("--t_dim", default=3, type=int, help="tmon hilbert dim cutoff")
     parser.add_argument("--Kerr", default=0.100, type=float, help="transmon Kerr in GHz")
@@ -52,16 +52,16 @@ if __name__ == "__main__":
     H0 = (-2.0 * jnp.pi * args.Kerr * 0.5 * dag(b) @ dag(b) @ b @ b
           -2.0 * jnp.pi * 0.00 * dag(a) @ a @ dag(b) @ b)
     H1 = [dag(a) @ a @ dag(b) @ b, b + dag(b), 1j * (b - dag(b))]
-    if args.gate == "error_parity":
-        # initial_states = [tensor(basis(args.c_dim, c_idx), basis(args.t_dim, 0))
-        #                   for c_idx in range(args.c_dim)]
-        # final_states = [tensor(basis(args.c_dim, c_idx), basis(args.t_dim, c_idx % 2))
-        #                 for c_idx in range(args.c_dim)]
+    if args.gate == "error_parity_g":
+        initial_states = [tensor(basis(args.c_dim, c_idx), basis(args.t_dim, 0))
+                          for c_idx in range(args.c_dim)]
+        final_states = [tensor(basis(args.c_dim, c_idx), basis(args.t_dim, c_idx % 2))
+                        for c_idx in range(args.c_dim)]
+    elif args.gate == "error_parity_plus":
         initial_states = [tensor(basis(args.c_dim, c_idx), unit(basis(args.t_dim, 0) + basis(args.t_dim, 1)))
                           for c_idx in range(2)]
         final_states = [tensor(basis(args.c_dim, c_idx),
-                               unit(basis(args.t_dim, 0)
-                                    + (-1)**(c_idx % 2) * basis(args.t_dim, 1)))
+                               unit(basis(args.t_dim, 0) + (-1)**(c_idx % 2) * basis(args.t_dim, 1)))
                         for c_idx in range(2)]
     else:
         raise RuntimeError("gate type not supported")
