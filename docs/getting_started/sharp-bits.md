@@ -8,7 +8,7 @@ import dynamiqs as dq
 
 ## Main differences with QuTiP
 
-<!-- If modifications are made in this section, ensure to also update the tutorials/defining-hamiltonians.md document to reflect these changes in the "Differences with QuTiP" warning admonition at the top of the file. -->
+<!-- If modifications are made in this section, ensure to also update the tutorials/time-dependent-operators.md document to reflect these changes in the "Differences with QuTiP" warning admonition at the top of the file. -->
 
 The syntax in dynamiqs is similar to [QuTiP](http://qutip.org/), a popular Python library for quantum simulation. However, there are some important differences that you should be aware of.
 
@@ -42,10 +42,10 @@ Array([[0.+0.j, 1.+0.j],
        [1.+0.j, 0.+0.j]], dtype=complex64)
 ```
 
-Likewise, you should use `dq.mpow()` instead of `**` (element-wise power) to compute the power of a matrix:
+Likewise, you should use `dq.powm()` instead of `**` (element-wise power) to compute the power of a matrix:
 
 ```pycon
->>> dq.mpow(sx, 2)  # correct
+>>> dq.powm(sx, 2)  # correct
 Array([[1.+0.j, 0.+0.j],
        [0.+0.j, 1.+0.j]], dtype=complex64)
 >>> sx**2  # incorrect

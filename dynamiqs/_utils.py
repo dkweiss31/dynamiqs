@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, PyTree
 
 
 def type_str(type: Any) -> str:  # noqa: A002
@@ -15,23 +16,6 @@ def type_str(type: Any) -> str:  # noqa: A002
 
 def obj_type_str(x: Any) -> str:
     return type_str(type(x))
-
-
-def check_time_array(x: Array, arg_name: str, allow_empty: bool = False):
-    # check that a time-array is valid (it must be a 1D array sorted in strictly
-    # ascending order and containing only positive values)
-    if x.ndim != 1:
-        raise ValueError(
-            f'Argument `{arg_name}` must be a 1D array, but is a {x.ndim}D array.'
-        )
-    if not allow_empty and len(x) == 0:
-        raise ValueError(f'Argument `{arg_name}` must contain at least one element.')
-    if not jnp.all(jnp.diff(x) > 0):
-        raise ValueError(
-            f'Argument `{arg_name}` must be sorted in strictly ascending order.'
-        )
-    if not jnp.all(x >= 0):
-        raise ValueError(f'Argument `{arg_name}` must contain positive values only.')
 
 
 def on_cpu(x: Array) -> str:
@@ -54,3 +38,8 @@ def cdtype() -> jnp.complex64 | jnp.complex128:
         return jnp.complex128
     else:
         raise ValueError(f'Data type `{dtype.dtype}` is not yet supported.')
+
+
+def tree_str_inline(x: PyTree) -> str:
+    # return an inline formatting of a pytree as a string
+    return eqx.tree_pformat(x, indent=0).replace('\n', '').replace(',', ', ')
