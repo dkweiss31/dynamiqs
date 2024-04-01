@@ -1,10 +1,13 @@
 import argparse
+
+import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import optax
 
 from dynamiqs import Options, grape, timecallable, dag, tensor, basis, destroy, eye, unit
+from dynamiqs import generate_noise_trajectory
 from dynamiqs import sesolve
 from dynamiqs.utils.file_io import generate_file_path
 import diffrax as dx
@@ -19,8 +22,8 @@ if __name__ == "__main__":
     parser.add_argument("--t_dim", default=4, type=int, help="tmon hilbert dim cutoff")
     parser.add_argument("--Kerr", default=0.100, type=float, help="transmon Kerr in GHz")
     parser.add_argument("--max_amp", default=[0.003, 0.05, 0.05], help="max drive amp in GHz")
-    parser.add_argument("--dt", default=5.0, type=float, help="time step for controls")
-    parser.add_argument("--time", default=140.0, type=float, help="gate time")
+    parser.add_argument("--dt", default=40.0, type=float, help="time step for controls")
+    parser.add_argument("--time", default=1000.0, type=float, help="gate time")
     parser.add_argument("--scale", default=0.001, type=float, help="randomization scale for initial pulse")
     parser.add_argument("--learning_rate", default=0.0005, type=float, help="learning rate for ADAM optimize")
     parser.add_argument("--b1", default=0.999, type=float, help="decay of learning rate first moment")
@@ -29,6 +32,15 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", default=10000, type=int, help="number of epochs")
     parser.add_argument("--target_fidelity", default=0.9995, type=float, help="target fidelity")
     parser.add_argument("--rng_seed", default=87336259, type=int, help="rng seed for random initial pulses")
+    parser.add_argument("--include_low_frequency_noise", default=1, type=int,
+                        help="whether to batch over different realizations of low-frequency noise")
+    parser.add_argument("--num_freq_shift_trajs", default=10, type=int,
+                        help="number of trajectories to sample low-frequency noise for")
+    parser.add_argument("--sample_rate", default=1.0, type=float, help="rate at which to sample noise (in us^-1)")
+    parser.add_argument("--relative_PSD_strength", default=1e-6, type=float,
+                        help="std-dev of frequency shifts given by sqrt(relative_PSD_strength * sample_rate)")
+    parser.add_argument("--f0", default=1e-2, type=float, help="cutoff frequency for 1/f noise (in us^-1)")
+    parser.add_argument("--white", default=0, type=int, help="white or 1/f noise")
     parser.add_argument("--plot", default=True, type=bool, help="plot the results?")
     args = parser.parse_args()
     if args.idx == -1:
@@ -70,11 +82,32 @@ if __name__ == "__main__":
     else:
         raise RuntimeError("gate type not supported")
 
+    if args.include_low_frequency_noise:
+
+        def obtain_shifts(idx):
+            t_list, shifts, _, freq_list, psd = generate_noise_trajectory(
+                args.sample_rate, args.time, args.relative_PSD_strength, args.f0, args.white, 256383 * idx
+            )
+            return shifts
+
+        noise_shifts = jax.vmap(obtain_shifts)(jnp.arange(args.num_freq_shift_trajs))
+        noise_tlist, _, _, _, _ = generate_noise_trajectory(
+                args.sample_rate, args.time, args.relative_PSD_strength, args.f0, args.white, 0
+            )
+        noise_spline_coeffs = dx.backward_hermite_coefficients(noise_tlist, noise_shifts.swapaxes(0, 1))
+        noise_spline = dx.CubicInterpolation(noise_tlist, noise_spline_coeffs)
+
+
     rng = np.random.default_rng(args.rng_seed)
     init_drive_params = 2.0 * jnp.pi * args.scale * rng.random((len(H1), ntimes))
 
     def H_func(t, drive_params):
         H = H0
+        if args.include_low_frequency_noise:
+            # extra factor of 2 is because Aniket defines it as 2 pi sigmaz
+            H = H + jnp.einsum(
+                "i,jk->ijk", 2.0 * jnp.pi * 2.0 * noise_spline.evaluate(t), dag(b) @ b
+            )
         for drive_idx in range(len(H1)):
             total_drive = jnp.clip(
                 envelope * drive_params[drive_idx],

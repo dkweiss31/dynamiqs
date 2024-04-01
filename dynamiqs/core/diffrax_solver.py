@@ -85,7 +85,7 @@ class FixedSolver(DiffraxSolver):
         super().__init__(*args)
         self.stepsize_controller = dx.ConstantStepSize()
         self.dt0 = self.solver.dt
-        self.max_steps = 100_000  # TODO: fix hard-coded max_steps
+        self.max_steps = 500_000  # TODO: fix hard-coded max_steps
 
     def infos(self, stats: dict[str, Array]) -> PyTree:
         return self.Infos(stats['num_steps'])
@@ -123,7 +123,7 @@ class AdaptiveSolver(DiffraxSolver):
             factormax=self.solver.max_factor,
         )
         self.dt0 = None
-        self.max_steps = self.solver.max_steps
+        self.max_steps = 500_000  # self.solver.max_steps
 
     def infos(self, stats: dict[str, Array]) -> PyTree:
         return self.Infos(
