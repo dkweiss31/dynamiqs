@@ -28,7 +28,7 @@ if __name__ == "__main__":
     parser.add_argument("--g", default=0.006, type=float, help="qudit-qudit coupling strength")  # 0.00322
     parser.add_argument("--dt", default=100.0, type=float, help="time step for controls")
     parser.add_argument("--time", default=2000.0, type=float, help="gate time")
-    parser.add_argument("--scale", default=0.01, type=float, help="randomization scale for initial pulse")
+    parser.add_argument("--scale", default=0.0001, type=float, help="randomization scale for initial pulse")
     parser.add_argument("--learning_rate", default=0.001, type=float, help="learning rate for ADAM optimize")
     parser.add_argument("--b1", default=0.999, type=float, help="decay of learning rate first moment")
     parser.add_argument("--b2", default=0.999, type=float, help="decay of learning rate second moment")
@@ -55,6 +55,8 @@ if __name__ == "__main__":
         coherent = True
     options = Options(target_fidelity=args.target_fidelity, epochs=args.epochs, coherent=coherent)
 
+    # can swap the roles of the transmons by simply renaming tmon_1 -> tmon_2, tmon_2 -> tmon_1,
+    # leaving everything else the same (excpet for c_dims)
     tmon_1 = scq.Transmon(EJ=args.EJ_1, EC=args.EC_1, ng=0.0, ncut=41, truncated_dim=args.c_dim_1)
     evals_1 = tmon_1.eigenvals(evals_count=args.c_dim_1)
     tmon_2 = scq.Transmon(EJ=args.EJ_2, EC=args.EC_2, ng=0.0, ncut=41, truncated_dim=args.c_dim_2)
@@ -85,6 +87,10 @@ if __name__ == "__main__":
     dressed_kets = dict([(f"({idx_1},{idx_2})", dressed_ket(idx_1, idx_2))
                         for idx_1 in range(args.c_dim_1) for idx_2 in range(args.c_dim_2)])
     drive_op_1 = hilbert_space.op_in_dressed_eigenbasis(tmon_1.n_operator)
+    drive_op_2 = hilbert_space.op_in_dressed_eigenbasis(tmon_2.n_operator)
+    large_matelem_idxs = jnp.argwhere(jnp.abs(drive_op_1.data.toarray()) > 0.5)
+    large_matelem_idxs_top = jnp.array([[idx_1, idx_2] for (idx_1, idx_2) in large_matelem_idxs if idx_1 > idx_2])
+    E_diffs = evals[large_matelem_idxs_top[:, 0]] - evals[large_matelem_idxs_top[:, 1]]
     zero_log = unit(dressed_kets["(0,0)"] + jnp.sqrt(3.0) * dressed_kets["(0,4)"])
     one_log = unit(jnp.sqrt(3.0) * dressed_kets["(0,2)"] + dressed_kets["(0,6)"])
     E_zero = unit(jnp.sqrt(3.0) * dressed_kets["(0,0)"] - dressed_kets["(0,4)"])
@@ -108,14 +114,13 @@ if __name__ == "__main__":
             E_zero_fin, E_one_fin, unit(E_zero_fin + E_one_fin), unit(E_zero_fin + 1j * E_one_fin),
             E_two_fin, E_three_fin, E_four_fin
         ]
-    drive_freqs = np.diff(evals_1)
-    H1 = [jnp.asarray(drive_op_1, dtype=cdtype()), ] * len(drive_freqs)
+    H1 = [jnp.asarray(drive_op_1, dtype=cdtype()), ] * len(E_diffs)
     rng = np.random.default_rng(args.rng_seed)
-    init_drive_params = 2.0 * jnp.pi * args.scale * rng.random((2 * len(drive_freqs), ntimes))
+    init_drive_params = 2.0 * jnp.pi * args.scale * rng.random((2 * len(E_diffs), ntimes))
     rwa_cutoff = jnp.inf
     rot_frame_drive = jnp.reshape(rot_frame_diag, (-1, 1)) - rot_frame_diag
 
-    def H_func(t, drive_params):
+    def H_func(t, drive_params, additional_args):
         H = H0
         # TODO this isn't exactly right since we also need to include the drive time dependence
         rot_frame_drive_rwa = jnp.where(
@@ -128,9 +133,9 @@ if __name__ == "__main__":
             I_drive_spline = dx.CubicInterpolation(tsave, I_drive_coeffs)
             Q_drive_coeffs = dx.backward_hermite_coefficients(tsave, envelope * drive_params[2 * drive_idx + 1])
             Q_drive_spline = dx.CubicInterpolation(tsave, Q_drive_coeffs)
-            H = H + (jnp.cos(2.0 * np.pi * drive_freqs[drive_idx] * t)
+            H = H + (jnp.cos(2.0 * np.pi * E_diffs[drive_idx] * t)
                      * I_drive_spline.evaluate(t)
-                     + jnp.sin(2.0 * np.pi * drive_freqs[drive_idx] * t)
+                     + jnp.sin(2.0 * np.pi * E_diffs[drive_idx] * t)
                      * Q_drive_spline.evaluate(t)) * rot_frame_drive_rwa * H1[drive_idx]
         return H
 

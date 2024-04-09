@@ -28,6 +28,7 @@ def grape(
     tsave: ArrayLike,
     params_to_optimize: ArrayLike,
     *,
+    additional_drive_args: ArrayLike = None,
     filepath: str = "tmp.h5py",
     optimizer: optax.GradientTransformation = optax.adam(0.1, b1=0.99, b2=0.99),
     solver: Solver = Tsit5(),
@@ -76,6 +77,7 @@ def grape(
                 initial_states,
                 target_states,
                 tsave,
+                additional_drive_args,
                 solver,
                 options,
                 optimizer,
@@ -89,7 +91,7 @@ def grape(
                 epoch,
                 epoch_start_time,
             )
-            if any(infids < 1 - options.target_fidelity):
+            if all(infids < 1 - options.target_fidelity):
                 print("target fidelity reached")
                 break
         print(f"all results saved to {filepath}")
@@ -131,6 +133,7 @@ def step(
     initial_states,
     target_states,
     tsave,
+    additional_drive_args,
     solver,
     options,
     optimizer,
@@ -139,19 +142,27 @@ def step(
     We have has_aux=True because loss also returns the infidelities on the side
     (want to save those numbers as they give info on which pulse was best)"""
     grads, infids = jax.grad(loss, has_aux=True)(
-        params_to_optimize, H, initial_states, target_states, tsave, solver, options
+        params_to_optimize, H, initial_states, target_states, tsave, additional_drive_args, solver, options
     )
     updates, opt_state = optimizer.update(grads, opt_state)
     params_to_optimize = optax.apply_updates(params_to_optimize, updates)
     return params_to_optimize, opt_state, infids
 
 
-def loss(params_to_optimize, H, initial_states, target_states, tsave, solver, options):
+def loss(params_to_optimize, H, initial_states, target_states, tsave, additional_drive_args, solver, options):
     # update H using the same function but new parameters
-    H = timecallable(H.f, args=(params_to_optimize,))
-    result = dq.sesolve(H, initial_states, tsave, solver=solver, options=options)
+    if additional_drive_args is not None:
+
+        def _sesolve(idx):
+            new_H = timecallable(H.f, args=(params_to_optimize, idx))
+            return dq.sesolve(new_H, initial_states, tsave, solver=solver, options=options)
+
+        results = jax.vmap(_sesolve)(jnp.arange(len(additional_drive_args)))
+    else:
+        H = timecallable(H.f, args=(params_to_optimize, 0))
+        results = dq.sesolve(H, initial_states, tsave, solver=solver, options=options)
     # result.states has shape (bH?, bpsi?, nt, n, 1) and we want the states at the final time
-    final_states = result.states[..., -1, :, :]
+    final_states = results.states[..., -1, :, :]
     if options.coherent:
         infids = infidelity_coherent(final_states, target_states)
     else:

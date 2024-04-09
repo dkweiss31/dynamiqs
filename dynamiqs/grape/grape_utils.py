@@ -32,7 +32,7 @@ def generate_noise_trajectory(
     # Frequency shift at each sample of time
     freq_shifts = (
         jnp.sqrt(relative_PSD_strength * sample_rate)
-        * jax.random.uniform(key, shape=(N,), minval=0., maxval=1.)
+        * jax.random.uniform(key, shape=(N,), minval=-0.5, maxval=0.5)
     )
     # Convert to frequency domain
     freq_y_vals = fft(freq_shifts)
