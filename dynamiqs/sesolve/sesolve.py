@@ -113,7 +113,7 @@ def _vmap_sesolve(
     # === vectorize function
     # we vectorize over H and psi0, all other arguments are not vectorized
     is_batched = (
-        is_timearray_batched(H),
+        False, #is_timearray_batched(H),
         psi0.ndim > 2,
         False,
         False,
