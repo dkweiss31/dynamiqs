@@ -61,9 +61,13 @@ if __name__ == "__main__":
 
     # can swap the roles of the transmons by simply renaming tmon_1 -> tmon_2, tmon_2 -> tmon_1,
     # leaving everything else the same (excpet for c_dims)
-    tmon_ancilla = scq.Transmon(EJ=parser_args.EJ_1, EC=parser_args.EC_1, ng=0.0, ncut=41, truncated_dim=parser_args.c_dim_1)
+    tmon_ancilla = scq.Transmon(
+        EJ=parser_args.EJ_1, EC=parser_args.EC_1, ng=0.0, ncut=41, truncated_dim=parser_args.c_dim_1
+    )
     evals_ancilla = tmon_ancilla.eigenvals(evals_count=parser_args.c_dim_1)
-    tmon_data = scq.Transmon(EJ=parser_args.EJ_2, EC=parser_args.EC_2, ng=0.0, ncut=41, truncated_dim=parser_args.c_dim_2)
+    tmon_data = scq.Transmon(
+        EJ=parser_args.EJ_2, EC=parser_args.EC_2, ng=0.0, ncut=41, truncated_dim=parser_args.c_dim_2
+    )
     evals_data = tmon_data.eigenvals(evals_count=parser_args.c_dim_2)
     hilbert_space = scq.HilbertSpace([tmon_ancilla, tmon_data])
     hilbert_space.add_interaction(
@@ -126,26 +130,19 @@ if __name__ == "__main__":
     H1 = [jnp.asarray(drive_op_1, dtype=cdtype()), ] * len(E_diffs)
     rng = np.random.default_rng(parser_args.rng_seed)
     init_drive_params = 2.0 * jnp.pi * (-2.0 * parser_args.scale * rng.random((len(H1), ntimes)) + parser_args.scale)
-    rwa_cutoff = jnp.inf
     rot_frame_drive = jnp.reshape(rot_frame_diag, (-1, 1)) - rot_frame_diag
 
     def H_func(t, drive_params, additional_args):
         H = H0
-        # TODO this isn't exactly right since we also need to include the drive time dependence
-        rot_frame_drive_rwa = jnp.where(
-            np.abs(rot_frame_drive) < rwa_cutoff,
-            jnp.exp(1j * rot_frame_drive * t * 2.0 * jnp.pi),
-            0.0,
-        )
-        for drive_idx in range(len(H1) // 2):
-            I_drive_coeffs = dx.backward_hermite_coefficients(tsave, envelope * drive_params[2 * drive_idx])
-            I_drive_spline = dx.CubicInterpolation(tsave, I_drive_coeffs)
-            Q_drive_coeffs = dx.backward_hermite_coefficients(tsave, envelope * drive_params[2 * drive_idx + 1])
-            Q_drive_spline = dx.CubicInterpolation(tsave, Q_drive_coeffs)
-            H = H + (jnp.cos(2.0 * np.pi * E_diffs[drive_idx] * t)
-                     * I_drive_spline.evaluate(t)
-                     + jnp.sin(2.0 * np.pi * E_diffs[drive_idx] * t)
-                     * Q_drive_spline.evaluate(t)) * rot_frame_drive_rwa * H1[drive_idx]
+        for drive_idx in range(len(H1)):
+            drive_coeffs = dx.backward_hermite_coefficients(tsave, envelope * drive_params[drive_idx])
+            drive_spline = dx.CubicInterpolation(tsave, drive_coeffs)
+            H_d = (jnp.cos(2.0 * np.pi * E_diffs[drive_idx] * t)
+                   * drive_spline.evaluate(t)
+                   * jnp.exp(1j * rot_frame_drive * t * 2.0 * jnp.pi)
+                   * H1[drive_idx]
+                   )
+            H = H + H_d
         return H
 
     H = timecallable(H_func, args=(init_drive_params,))

@@ -22,7 +22,7 @@ if __name__ == "__main__":
     parser.add_argument("--t_dim", default=4, type=int, help="tmon hilbert dim cutoff")
     parser.add_argument("--Kerr", default=0.100, type=float, help="transmon Kerr in GHz")
     parser.add_argument("--max_amp", default=[0.001, 0.05, 0.05], help="max drive amp in GHz")
-    parser.add_argument("--dt", default=100.0, type=float, help="time step for controls")
+    parser.add_argument("--dt", default=25.0, type=float, help="time step for controls")
     parser.add_argument("--time", default=1000.0, type=float, help="gate time")
     parser.add_argument("--ramp_nts", default=2, type=int, help="numper of points in ramps")
     parser.add_argument("--scale", default=1e-5, type=float, help="randomization scale for initial pulse")
@@ -30,12 +30,12 @@ if __name__ == "__main__":
     parser.add_argument("--b1", default=0.999, type=float, help="decay of learning rate first moment")
     parser.add_argument("--b2", default=0.999, type=float, help="decay of learning rate second moment")
     parser.add_argument("--coherent", default=1, type=int, help="which fidelity metric to use")
-    parser.add_argument("--epochs", default=10000, type=int, help="number of epochs")
-    parser.add_argument("--target_fidelity", default=0.9995, type=float, help="target fidelity")
-    parser.add_argument("--rng_seed", default=873362595, type=int, help="rng seed for random initial pulses")  # 87336259
-    parser.add_argument("--include_low_frequency_noise", default=1, type=int,
+    parser.add_argument("--epochs", default=300, type=int, help="number of epochs")
+    parser.add_argument("--target_fidelity", default=0.9990, type=float, help="target fidelity")
+    parser.add_argument("--rng_seed", default=46, type=int, help="rng seed for random initial pulses")  # 87336259
+    parser.add_argument("--include_low_frequency_noise", default=0, type=int,
                         help="whether to batch over different realizations of low-frequency noise")
-    parser.add_argument("--num_freq_shift_trajs", default=4, type=int,
+    parser.add_argument("--num_freq_shift_trajs", default=5, type=int,
                         help="number of trajectories to sample low-frequency noise for")
     parser.add_argument("--sample_rate", default=1.0, type=float, help="rate at which to sample noise (in us^-1)")
     parser.add_argument("--relative_PSD_strength", default=1e-6, type=float,
