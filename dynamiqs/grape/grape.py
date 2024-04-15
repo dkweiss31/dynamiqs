@@ -33,6 +33,7 @@ def grape(
     optimizer: optax.GradientTransformation = optax.adam(0.1, b1=0.99, b2=0.99),
     solver: Solver = Tsit5(),
     options: Options = Options(),
+    init_params_to_save: dict = {},
 ) -> ArrayLike:
     r"""Perform gradient descent to optimize Hamiltonian parameters
 
@@ -65,7 +66,7 @@ def grape(
     initial_states = jnp.asarray(initial_states, dtype=cdtype())
     target_states = jnp.asarray(target_states, dtype=cdtype())
     opt_state = optimizer.init(params_to_optimize)
-    init_param_dict = options.__dict__ | {"tsave": tsave}
+    init_param_dict = options.__dict__ | {"tsave": tsave} | init_params_to_save
     print(f"saving results to {filepath}")
     try:  # trick for catching keyboard interrupt
         for epoch in range(options.epochs):

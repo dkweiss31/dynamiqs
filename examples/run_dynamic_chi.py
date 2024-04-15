@@ -24,7 +24,8 @@ if __name__ == "__main__":
     parser.add_argument("--max_amp", default=[0.001, 0.05, 0.05], help="max drive amp in GHz")
     parser.add_argument("--dt", default=100.0, type=float, help="time step for controls")
     parser.add_argument("--time", default=1000.0, type=float, help="gate time")
-    parser.add_argument("--scale", default=0.001, type=float, help="randomization scale for initial pulse")
+    parser.add_argument("--ramp_nts", default=2, type=int, help="numper of points in ramps")
+    parser.add_argument("--scale", default=1e-5, type=float, help="randomization scale for initial pulse")
     parser.add_argument("--learning_rate", default=0.001, type=float, help="learning rate for ADAM optimize")
     parser.add_argument("--b1", default=0.999, type=float, help="decay of learning rate first moment")
     parser.add_argument("--b2", default=0.999, type=float, help="decay of learning rate second moment")
@@ -53,7 +54,10 @@ if __name__ == "__main__":
     ntimes = int(parser_args.time // parser_args.dt) + 1
     tsave = jnp.linspace(0, parser_args.time, ntimes)
     # force the control endpoints to be at zero
-    envelope = jnp.concatenate((jnp.array([0.0]), jnp.ones(ntimes - 2), jnp.array([0.0])))
+    begin_ramp = (1 - jnp.cos(jnp.linspace(0.0, jnp.pi, parser_args.ramp_nts))) / 2
+    envelope = jnp.concatenate(
+        (begin_ramp, jnp.ones(ntimes - 2 * parser_args.ramp_nts), jnp.flip(begin_ramp))
+    )
     if parser_args.coherent == 0:
         coherent = False
     else:
@@ -64,15 +68,16 @@ if __name__ == "__main__":
     b = tensor(eye(parser_args.c_dim), destroy(parser_args.t_dim))
     H0 = -2.0 * jnp.pi * parser_args.Kerr * 0.5 * dag(b) @ dag(b) @ b @ b
     H1 = [dag(a) @ a @ dag(b) @ b, b + dag(b), 1j * (b - dag(b))]
+    # H1 = [dag(a) @ a @ dag(b) @ b, ]
     if type(parser_args.max_amp) is float:
         max_amp = len(H1) * [2.0 * jnp.pi * parser_args.max_amp]
     else:
         max_amp = 2.0 * jnp.pi * jnp.asarray(parser_args.max_amp)
     if parser_args.gate == "error_parity_g":
         initial_states = [tensor(basis(parser_args.c_dim, c_idx), basis(parser_args.t_dim, 0))
-                          for c_idx in range(parser_args.c_dim)]
+                          for c_idx in range(2)]
         final_states = [tensor(basis(parser_args.c_dim, c_idx), basis(parser_args.t_dim, c_idx % 2))
-                        for c_idx in range(parser_args.c_dim)]
+                        for c_idx in range(2)]
     elif parser_args.gate == "error_parity_plus":
         initial_states = [tensor(basis(parser_args.c_dim, c_idx), unit(basis(parser_args.t_dim, 0) + basis(parser_args.t_dim, 1)))
                           for c_idx in range(2)]
@@ -87,7 +92,7 @@ if __name__ == "__main__":
         def obtain_noise_spline(idx):
             noise_t_list, noise_shifts, _, freq_list, psd = generate_noise_trajectory(
                 parser_args.sample_rate, parser_args.time, parser_args.relative_PSD_strength,
-                parser_args.f0, parser_args.white, 256383 * idx
+                parser_args.f0, parser_args.white, parser_args.rng_seed * idx
             )
             noise_spline_coeffs = dx.backward_hermite_coefficients(noise_t_list, noise_shifts)
             return dx.CubicInterpolation(noise_t_list, noise_spline_coeffs)
@@ -101,26 +106,28 @@ if __name__ == "__main__":
     else:
         additional_drive_args = None
 
-        # noise_splines = dict([(str(idx), obtain_spline(idx)) for idx in jnp.arange(parser_args.num_freq_shift_trajs)])
-
     rng = np.random.default_rng(parser_args.rng_seed)
     init_drive_params = 2.0 * jnp.pi * (-2.0 * parser_args.scale * rng.random((len(H1), ntimes)) + parser_args.scale)
 
-    def H_func(t, drive_params, idx):
+    def _drive_at_time(t, drive_param, max_amp):
+        total_drive = jnp.clip(
+            envelope * drive_param,
+            a_min=-max_amp,
+            a_max=max_amp,
+        )
+        drive_coeffs = dx.backward_hermite_coefficients(tsave, total_drive)
+        drive_spline = dx.CubicInterpolation(tsave, drive_coeffs)
+        return drive_spline.evaluate(t)
+
+    def H_func(t, drive_params, noise_idx):
         H = H0
         if parser_args.include_low_frequency_noise:
             # extra factor of 2 is because Aniket defines it as 2 pi sigmaz
-            noise_spline = obtain_noise_spline(idx)
+            noise_spline = obtain_noise_spline(noise_idx)
             H = H + 2.0 * jnp.pi * 2.0 * noise_spline.evaluate(t) * dag(b) @ b
         for drive_idx in range(len(H1)):
-            total_drive = jnp.clip(
-                envelope * drive_params[drive_idx],
-                a_min=-max_amp[drive_idx],
-                a_max=max_amp[drive_idx],
-            )
-            drive_coeffs = dx.backward_hermite_coefficients(tsave, total_drive)
-            drive_spline = dx.CubicInterpolation(tsave, drive_coeffs)
-            H = H + drive_spline.evaluate(t) * H1[drive_idx]
+            drive_amp = _drive_at_time(t, drive_params[drive_idx], max_amp[drive_idx])
+            H = H + drive_amp * H1[drive_idx]
         return H
 
 
@@ -135,7 +142,8 @@ if __name__ == "__main__":
         additional_drive_args=additional_drive_args,
         filepath=filename,
         optimizer=optimizer,
-        options=options
+        options=options,
+        init_params_to_save=parser_args.__dict__,
     )
 
     if parser_args.plot:
@@ -143,14 +151,14 @@ if __name__ == "__main__":
         finer_times = jnp.linspace(0.0, parser_args.time, 201)
         fig, ax = plt.subplots()
         for drive_idx in range(len(H1)):
-            total_drive = jnp.clip(
-                envelope * opt_params[drive_idx],
-                a_min=-max_amp[drive_idx],
-                a_max=max_amp[drive_idx],
-            )
-            drive_coeffs = dx.backward_hermite_coefficients(tsave, total_drive)
-            drive_spline = dx.CubicInterpolation(tsave, drive_coeffs)
-            plt.plot(finer_times, drive_spline.evaluate(finer_times)/(2.0 * np.pi), label=f"I_{drive_idx}")
+            drive_amps = _drive_at_time(
+                finer_times, opt_params[drive_idx], max_amp[drive_idx]
+            ) / (2.0 * np.pi)
+            init_drive_amps = _drive_at_time(
+                finer_times, init_drive_params[drive_idx], max_amp[drive_idx]
+            ) / (2.0 * np.pi)
+            plt.plot(finer_times, drive_amps, label=f"I_{drive_idx}")
+            plt.plot(finer_times, init_drive_amps, label=f"I_{drive_idx}_init")
         plt.plot(finer_times, (np.pi / (2.0 * np.pi * tsave[-1])) * jnp.ones_like(finer_times),
                  ls="--", color="black", label="chi")
         plt.plot(finer_times, (-np.pi / (2.0 * np.pi * tsave[-1])) * jnp.ones_like(finer_times),
