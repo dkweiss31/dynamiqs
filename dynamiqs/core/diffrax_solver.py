@@ -18,6 +18,7 @@ class DiffraxSolver(BaseSolver):
     max_steps: dx.AbstractVar[int]
     diffrax_solver: dx.AbstractVar[dx.AbstractSolver]
     terms: dx.AbstractVar[dx.AbstractTerm]
+    discrete_terminating_event: dx.DiscreteTerminatingEvent | None
 
     def __init__(self, *args):
         # pass all init arguments to `BaseSolver`
@@ -46,19 +47,20 @@ class DiffraxSolver(BaseSolver):
                 self.terms,
                 self.diffrax_solver,
                 t0=self.t0,
-                t1=self.ts[-1],
+                t1=self.t1,
                 dt0=self.dt0,
                 y0=self.y0,
                 saveat=saveat,
                 stepsize_controller=self.stepsize_controller,
                 adjoint=adjoint,
+                discrete_terminating_event=self.discrete_terminating_event,
                 max_steps=self.max_steps,
             )
 
         # === collect and return results
         save_a, save_b = solution.ys
         saved = self.collect_saved(save_a, save_b[0])
-        return self.result(saved, infos=self.infos(solution.stats))
+        return self.result(saved, solution.ts[-1][0], infos=self.infos(solution.stats))
 
     @abstractmethod
     def infos(self, stats: dict[str, Array]) -> PyTree:

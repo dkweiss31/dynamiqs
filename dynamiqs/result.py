@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import equinox as eqx
+import jax.numpy as jnp
 from jax import Array
 from jaxtyping import PyTree
 
@@ -8,7 +9,7 @@ from .gradient import Gradient
 from .options import Options
 from .solver import Solver
 
-__all__ = ['SEResult', 'MEResult']
+__all__ = ['SEResult', 'MEResult', 'MCResult']
 
 
 def memory_bytes(x: Array) -> int:
@@ -36,17 +37,41 @@ class Saved(eqx.Module):
     extra: PyTree | None
 
 
+class FinalSaved(Saved):
+    ylast: Array | None
+
+
 class Result(eqx.Module):
+    """Result of the integration.
+
+    Attributes:
+        states _(Array)_: Saved states.
+        final_state _(Array)_: Saved final state
+        expects _(Array, optional)_: Saved expectation values.
+        extra _(PyTree, optional)_: Extra data saved.
+        infos _(PyTree, optional)_: Solver-dependent information on the resolution.
+        tsave _(Array)_: Times for which results were saved.
+        solver _(Solver)_: Solver used.
+        gradient _(Gradient)_: Gradient used.
+        options _(Options)_: Options used.
+        final_time _(Array)_: final solution time
+    """
+
     tsave: Array
     solver: Solver
     gradient: Gradient | None
     options: Options
-    _saved: Saved
-    infos: PyTree | None
+    _saved: FinalSaved
+    final_time: Array
+    infos: PyTree | None = None
 
     @property
     def states(self) -> Array:
         return self._saved.ysave
+
+    @property
+    def final_state(self) -> Array:
+        return self._saved.ylast
 
     @property
     def expects(self) -> Array | None:
@@ -88,11 +113,59 @@ class Result(eqx.Module):
         raise NotImplementedError
 
 
+class MCResult(eqx.Module):
+    """Result of Monte Carlo integration
+
+    Attributes:
+        no_jump_states _(Array)_: Saved no-jump states.
+        final_no_jump_state _(Array)_: Saved final no-jump state
+        jump_states _(Array)_: Saved states for jump trajectories
+        final_jump_states _(Array)_: Saved final states for jump trajectories
+        expects _(Array, optional)_: Saved expectation values.
+        tsave _(Array)_: Times for which results were saved.
+    """
+
+    tsave: Array
+    _no_jump_res: Result
+    _jump_res: Result
+    no_jump_prob: float
+    expects: Array | None
+
+    @property
+    def no_jump_states(self) -> Array:
+        return self._no_jump_res.states
+
+    @property
+    def jump_states(self) -> Array:
+        return self._jump_res.states
+
+    @property
+    def final_no_jump_state(self) -> Array:
+        return self._no_jump_res.final_state
+
+    @property
+    def final_jump_states(self) -> Array:
+        return self._jump_res.final_state
+
+    def __str__(self) -> str:
+        parts = {
+            'No-jump result': str(self._no_jump_res),
+            'Jump result': str(self._jump_res),
+            'No-jump states  ': array_str(self.no_jump_states),
+            'Jump states  ': array_str(self.jump_states),
+            'Expects ': array_str(self.expects) if self.expects is not None else None,
+        }
+        parts = {k: v for k, v in parts.items() if v is not None}
+        parts_str = '\n'.join(f'{k}: {v}' for k, v in parts.items())
+        return '==== MCResult ====\n' + parts_str
+
+
 class SEResult(Result):
     """Result of the Schrödinger equation integration.
 
     Attributes:
         states _(array of shape (nH?, npsi0?, ntsave, n, 1))_: Saved states.
+        final_state _(array of shape (nH?, npsi0?, n, 1))_: Saved final state
         expects _(array of shape (nH?, npsi0?, nE, ntsave) or None)_: Saved expectation
             values, if specified by `exp_ops`.
         extra _(PyTree or None)_: Extra data saved with `save_extra()` if
@@ -102,6 +175,7 @@ class SEResult(Result):
         solver _(Solver)_: Solver used.
         gradient _(Gradient)_: Gradient used.
         options _(Options)_: Options used.
+        final_time _(Array)_: final solution time
     """
 
 
@@ -110,6 +184,7 @@ class MEResult(Result):
 
     Attributes:
         states _(array of shape (nH?, nrho0?, ntsave, n, n))_: Saved states.
+        final_state _(array of shape (nH?, nrho0?, n, n))_: Saved final state
         expects _(array of shape (nH?, nrho0?, nE, ntsave) or None)_: Saved expectation
             values, if specified by `exp_ops`.
         extra _(PyTree or None)_: Extra data saved with `save_extra()` if
@@ -119,4 +194,5 @@ class MEResult(Result):
         solver _(Solver)_: Solver used.
         gradient _(Gradient)_: Gradient used.
         options _(Options)_: Options used.
+        final_time _(Array)_: final solution time
     """
