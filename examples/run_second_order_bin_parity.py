@@ -42,7 +42,7 @@ if __name__ == "__main__":
     if parser_args.idx == -1:
         filename = generate_file_path("h5py", f"second_bin_mango_{parser_args.gate}", "out")
     else:
-        filename = f"out/{str(parser_args.idx).zfill(5)}_second_bin_mango{parser_args.gate}.h5py"
+        filename = f"out/{str(parser_args.idx).zfill(5)}_second_bin_mango_{parser_args.gate}.h5py"
     N = parser_args.c_dim_1 * parser_args.c_dim_2
 
     optimizer = optax.adam(learning_rate=parser_args.learning_rate, b1=parser_args.b1, b2=parser_args.b2)
