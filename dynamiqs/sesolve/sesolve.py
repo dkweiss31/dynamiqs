@@ -122,7 +122,7 @@ def _vmap_sesolve(
         False,
     )
 
-    # the result is vectorized over `saved`
+    # the result is vectorized over `_saved` and `infos`
     out_axes = SEResult(None, None, None, None, 0, 0)
 
     # compute vectorized function with given batching strategy
@@ -166,7 +166,7 @@ def _sesolve(
 
 def _check_sesolve_args(H: TimeArray, psi0: Array, exp_ops: Array | None):
     # === check H shape
-    check_shape(H, 'H', '(?, n, n)', subs={'?': 'nH?'})
+    check_shape(H, 'H', '(..., n, n)')
     check_shape(psi0, 'psi0', '(?, n, 1)', subs={'?': 'npsi0?'})
 
     # === check exp_ops shape
