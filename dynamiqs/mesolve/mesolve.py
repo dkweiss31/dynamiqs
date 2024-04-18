@@ -141,7 +141,7 @@ def _vmap_mesolve(
     )
 
     # the result is vectorized over `_saved` and `infos`
-    out_axes = MEResult(None, None, None, None, 0, 0)
+    out_axes = MEResult(None, None, None, None, 0, 0, 0)
 
     # compute vectorized function with given batching strategy
     f = compute_vmap(_mesolve, options.cartesian_batching, is_batched, out_axes)
