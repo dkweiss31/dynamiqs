@@ -408,8 +408,8 @@ class ModulatedTimeArray(TimeArray):
         return ModulatedTimeArray(self.f, self.array.mT, self.args)
 
     def _call_f(self, t: float) -> Array:
-        args = expand_as_broadcastable(self.args)
-        return self.f(t, *args)
+        # args = expand_as_broadcastable(self.args)
+        return self.f(t, *self.args)
 
     def __call__(self, t: float) -> Array:
         values = self._call_f(t)
@@ -461,8 +461,8 @@ class CallableTimeArray(TimeArray):
         return CallableTimeArray(f, self.args)
 
     def _call_f(self, t: float) -> Array:
-        args = expand_as_broadcastable(self.args)
-        return self.f(t, *args)
+        # args = expand_as_broadcastable(self.args)
+        return self.f(t, *self.args)
 
     def __call__(self, t: float) -> Array:
         return self._call_f(t)
