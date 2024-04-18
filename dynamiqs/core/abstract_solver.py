@@ -2,16 +2,18 @@ from __future__ import annotations
 
 from abc import abstractmethod
 
+from diffrax import DiscreteTerminatingEvent
 import equinox as eqx
+import jax.numpy as jnp
 from jax import Array
 from jaxtyping import PyTree, Scalar
 
 from ..gradient import Gradient
 from ..options import Options
-from ..result import MEResult, Result, Saved, SEResult
+from ..result import MEResult, Result, Saved, SEResult, FinalSaved
 from ..solver import Solver
 from ..time_array import TimeArray
-from ..utils.utils import expect
+from ..utils.utils import expect, unit
 
 
 class AbstractSolver(eqx.Module):
@@ -35,7 +37,7 @@ class BaseSolver(AbstractSolver):
 
     @property
     def t1(self) -> Scalar:
-        return self.ts[-1]
+        return self.ts[-1] if self.options.t1 is None else self.options.t1
 
     def save(self, y: PyTree) -> Saved:
         ysave, Esave, extra = None, None, None
@@ -61,20 +63,35 @@ class BaseSolver(AbstractSolver):
             Esave = Esave.swapaxes(-1, -2)
             saved = eqx.tree_at(lambda x: x.Esave, saved, Esave)
 
-        return saved
+        return FinalSaved(saved.ysave, saved.Esave, saved.extra, ylast)
 
     @abstractmethod
-    def result(self, saved: Saved, infos: PyTree | None = None) -> Result:
+    def result(self, saved: Saved, final_time: float, infos: PyTree | None = None) -> Result:
         pass
+
+    @property
+    def discrete_terminating_event(self):
+        return None
 
 
 class SESolver(BaseSolver):
-    def result(self, saved: Saved, infos: PyTree | None = None) -> Result:
-        return SEResult(self.ts, self.solver, self.gradient, self.options, saved, infos)
+    def result(self, saved: Saved, final_time: float, infos: PyTree | None = None) -> Result:
+        return SEResult(self.ts, self.solver, self.gradient, self.options, saved, final_time, infos)
 
 
 class MESolver(BaseSolver):
-    Ls: list[TimeArray]
+    Ls: list[TimeArray] | None = None
 
-    def result(self, saved: Saved, infos: PyTree | None = None) -> Result:
-        return MEResult(self.ts, self.solver, self.gradient, self.options, saved, infos)
+    def result(self, saved: Saved, final_time: float, infos: PyTree | None = None) -> Result:
+        return MEResult(self.ts, self.solver, self.gradient, self.options, saved, final_time, infos)
+
+
+class MCSolver(BaseSolver):
+    Ls: list[Array | TimeArray] | None = None
+    rand: float = 0.0
+
+    def result(self, saved: Saved, final_time: float, infos: PyTree | None = None) -> Result:
+        return Result(self.ts, self.solver, self.gradient, self.options, saved, final_time, infos)
+
+    def save(self, y: PyTree) -> Saved:
+        return super().save(unit(y))
