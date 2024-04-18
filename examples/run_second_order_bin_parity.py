@@ -19,8 +19,8 @@ if __name__ == "__main__":
     parser.add_argument("--idx", default=-1, type=int, help="idx to scan over")
     parser.add_argument("--gate", default="parity", type=str,
                         help="type of gate. Can be parity")
-    parser.add_argument("--c_dim_1", default=4, type=int, help="hilbert dim cutoff 1")
-    parser.add_argument("--c_dim_2", default=8, type=int, help="hilbert dim cutoff 2")
+    parser.add_argument("--c_dim_1", default=3, type=int, help="hilbert dim cutoff 1")
+    parser.add_argument("--c_dim_2", default=7, type=int, help="hilbert dim cutoff 2")
     parser.add_argument("--EJ_1", default=12.606, type=float, help="ancilla qubit EJ")
     parser.add_argument("--EJ_2", default=30.0, type=float, help="data qubit EJ")
     parser.add_argument("--EC_1", default=0.270, type=float, help="ancilla qubit EC")
@@ -59,8 +59,6 @@ if __name__ == "__main__":
         coherent = True
     options = Options(target_fidelity=parser_args.target_fidelity, epochs=parser_args.epochs, coherent=coherent)
 
-    # can swap the roles of the transmons by simply renaming tmon_1 -> tmon_2, tmon_2 -> tmon_1,
-    # leaving everything else the same (excpet for c_dims)
     tmon_ancilla = scq.Transmon(
         EJ=parser_args.EJ_1, EC=parser_args.EC_1, ng=0.0, ncut=41, truncated_dim=parser_args.c_dim_1
     )
@@ -95,15 +93,6 @@ if __name__ == "__main__":
     dressed_kets = dict([(f"({idx_1},{idx_2})", dressed_ket(idx_1, idx_2))
                          for idx_1 in range(parser_args.c_dim_1) for idx_2 in range(parser_args.c_dim_2)])
     drive_op_1 = hilbert_space.op_in_dressed_eigenbasis(tmon_ancilla.n_operator)
-    E_diffs = np.abs([
-        evals[hilbert_space.dressed_index((1, 1))] - evals[hilbert_space.dressed_index((0, 1))],
-        evals[hilbert_space.dressed_index((1, 3))] - evals[hilbert_space.dressed_index((0, 3))],
-        evals[hilbert_space.dressed_index((1, 5))] - evals[hilbert_space.dressed_index((0, 5))],
-        (evals[hilbert_space.dressed_index((2, 0))] - evals[hilbert_space.dressed_index((0, 0))]) / 2,
-        (evals[hilbert_space.dressed_index((2, 2))] - evals[hilbert_space.dressed_index((0, 2))]) / 2,
-        (evals[hilbert_space.dressed_index((2, 4))] - evals[hilbert_space.dressed_index((0, 4))]) / 2,
-        (evals[hilbert_space.dressed_index((2, 6))] - evals[hilbert_space.dressed_index((0, 6))]) / 2,
-    ])
     zero_log = unit(dressed_kets["(0,0)"] + jnp.sqrt(3.0) * dressed_kets["(0,4)"])
     one_log = unit(jnp.sqrt(3.0) * dressed_kets["(0,2)"] + dressed_kets["(0,6)"])
     E_zero = unit(jnp.sqrt(3.0) * dressed_kets["(0,0)"] - dressed_kets["(0,4)"])
@@ -127,6 +116,26 @@ if __name__ == "__main__":
             E_zero_fin, E_one_fin, unit(E_zero_fin + E_one_fin), unit(E_zero_fin + 1j * E_one_fin),
             E_two_fin, E_three_fin, E_four_fin
         ]
+        E_diffs = np.abs([
+            evals[hilbert_space.dressed_index((1, 1))] - evals[hilbert_space.dressed_index((0, 1))],
+            evals[hilbert_space.dressed_index((1, 3))] - evals[hilbert_space.dressed_index((0, 3))],
+            evals[hilbert_space.dressed_index((1, 5))] - evals[hilbert_space.dressed_index((0, 5))],
+            (evals[hilbert_space.dressed_index((2, 0))] - evals[hilbert_space.dressed_index((0, 0))]) / 2,
+            (evals[hilbert_space.dressed_index((2, 2))] - evals[hilbert_space.dressed_index((0, 2))]) / 2,
+            (evals[hilbert_space.dressed_index((2, 4))] - evals[hilbert_space.dressed_index((0, 4))]) / 2,
+            (evals[hilbert_space.dressed_index((2, 6))] - evals[hilbert_space.dressed_index((0, 6))]) / 2,
+        ])
+    elif parser_args.gate == "dephasing_parity":
+        E_zero_fin = unit(jnp.sqrt(3.0) * dressed_kets["(1,0)"] - dressed_kets["(1,4)"])
+        E_one_fin = unit(dressed_kets["(1,2)"] - jnp.sqrt(3.0) * dressed_kets["(1,6)"])
+        initial_states = [zero_log, one_log, E_zero, E_one]
+        final_states = [zero_log, one_log, E_zero_fin, E_one_fin]
+        E_diffs = np.abs([
+            (evals[hilbert_space.dressed_index((1, 0))] - evals[hilbert_space.dressed_index((0, 0))]),
+            (evals[hilbert_space.dressed_index((1, 2))] - evals[hilbert_space.dressed_index((0, 2))]),
+            (evals[hilbert_space.dressed_index((1, 4))] - evals[hilbert_space.dressed_index((0, 4))]),
+            (evals[hilbert_space.dressed_index((1, 6))] - evals[hilbert_space.dressed_index((0, 6))]),
+        ])
     H1 = [jnp.asarray(drive_op_1, dtype=cdtype()), ] * len(E_diffs)
     rng = np.random.default_rng(parser_args.rng_seed)
     init_drive_params = 2.0 * jnp.pi * (-2.0 * parser_args.scale * rng.random((len(H1), ntimes)) + parser_args.scale)
