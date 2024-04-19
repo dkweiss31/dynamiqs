@@ -3,15 +3,20 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import optax
-import qutip as qt
 import diffrax as dx
 import scqubits as scq
+from cycler import cycler
 
 import dynamiqs as dq
 from dynamiqs import Options, grape, timecallable, basis, unit
 from dynamiqs._utils import cdtype
 from dynamiqs.utils.file_io import generate_file_path
-from dynamiqs.utils.fidelity import infidelity_coherent
+
+color_cycler = plt.rcParams['axes.prop_cycle']
+ls_cycler = cycler(ls=['-', '--', '-.', ':'])
+alpha_cycler = cycler(alpha=[1.0, 0.6, 0.2])
+lw_cycler = cycler(lw=[2.0, 1.0])
+color_ls_alpha_cycler = alpha_cycler * lw_cycler * ls_cycler * color_cycler
 
 
 if __name__ == "__main__":
@@ -20,13 +25,13 @@ if __name__ == "__main__":
     parser.add_argument("--gate", default="parity", type=str,
                         help="type of gate. Can be parity")
     parser.add_argument("--c_dim_1", default=3, type=int, help="hilbert dim cutoff 1")
-    parser.add_argument("--c_dim_2", default=7, type=int, help="hilbert dim cutoff 2")
+    parser.add_argument("--c_dim_2", default=8, type=int, help="hilbert dim cutoff 2")
     parser.add_argument("--EJ_1", default=12.606, type=float, help="ancilla qubit EJ")
     parser.add_argument("--EJ_2", default=30.0, type=float, help="data qubit EJ")
     parser.add_argument("--EC_1", default=0.270, type=float, help="ancilla qubit EC")
     parser.add_argument("--EC_2", default=0.110, type=float, help="data qubit EC")
     parser.add_argument("--g", default=0.006, type=float, help="qudit-qudit coupling strength")  # 0.00322
-    parser.add_argument("--dt", default=100.0, type=float, help="time step for controls")
+    parser.add_argument("--dt", default=25.0, type=float, help="time step for controls")
     parser.add_argument("--time", default=1000.0, type=float, help="gate time")
     parser.add_argument("--ramp_nts", default=2, type=int, help="numper of points in ramps")
     parser.add_argument("--scale", default=0.0001, type=float, help="randomization scale for initial pulse")
@@ -92,7 +97,8 @@ if __name__ == "__main__":
 
     dressed_kets = dict([(f"({idx_1},{idx_2})", dressed_ket(idx_1, idx_2))
                          for idx_1 in range(parser_args.c_dim_1) for idx_2 in range(parser_args.c_dim_2)])
-    drive_op_1 = hilbert_space.op_in_dressed_eigenbasis(tmon_ancilla.n_operator)
+    drive_op_ancilla = hilbert_space.op_in_dressed_eigenbasis(tmon_ancilla.n_operator)
+    drive_op_data = hilbert_space.op_in_dressed_eigenbasis(tmon_data.n_operator)
     zero_log = unit(dressed_kets["(0,0)"] + jnp.sqrt(3.0) * dressed_kets["(0,4)"])
     one_log = unit(jnp.sqrt(3.0) * dressed_kets["(0,2)"] + dressed_kets["(0,6)"])
     E_zero = unit(jnp.sqrt(3.0) * dressed_kets["(0,0)"] - dressed_kets["(0,4)"])
@@ -106,25 +112,23 @@ if __name__ == "__main__":
     E_three_fin = dressed_kets["(1,3)"]
     E_four_fin = dressed_kets["(1,5)"]
     if parser_args.gate == "parity":
+        # E_zero_fin = unit(jnp.sqrt(3.0) * dressed_kets["(1,0)"] - dressed_kets["(1,4)"])
+        # E_one_fin = unit(dressed_kets["(1,2)"] - jnp.sqrt(3.0) * dressed_kets["(1,6)"])
         initial_states = [
-            zero_log, one_log, unit(zero_log + one_log), unit(zero_log + 1j * one_log),
-            E_zero, E_one, unit(E_zero + E_one), unit(E_zero + 1j * E_one),
+            zero_log, one_log, #unit(zero_log + one_log), unit(zero_log + 1j * one_log),
+            E_zero, E_one, #unit(E_zero + E_one), unit(E_zero + 1j * E_one),
             E_two, E_three, E_four
         ]
         final_states = [
-            zero_log, one_log, unit(zero_log + one_log), unit(zero_log + 1j * one_log),
-            E_zero_fin, E_one_fin, unit(E_zero_fin + E_one_fin), unit(E_zero_fin + 1j * E_one_fin),
+            zero_log, one_log, #unit(zero_log + one_log), unit(zero_log + 1j * one_log),
+            E_zero_fin, E_one_fin, #unit(E_zero_fin + E_one_fin), unit(E_zero_fin + 1j * E_one_fin),
             E_two_fin, E_three_fin, E_four_fin
         ]
-        E_diffs = np.abs([
-            evals[hilbert_space.dressed_index((1, 1))] - evals[hilbert_space.dressed_index((0, 1))],
-            evals[hilbert_space.dressed_index((1, 3))] - evals[hilbert_space.dressed_index((0, 3))],
-            evals[hilbert_space.dressed_index((1, 5))] - evals[hilbert_space.dressed_index((0, 5))],
-            (evals[hilbert_space.dressed_index((2, 0))] - evals[hilbert_space.dressed_index((0, 0))]) / 2,
-            (evals[hilbert_space.dressed_index((2, 2))] - evals[hilbert_space.dressed_index((0, 2))]) / 2,
-            (evals[hilbert_space.dressed_index((2, 4))] - evals[hilbert_space.dressed_index((0, 4))]) / 2,
-            (evals[hilbert_space.dressed_index((2, 6))] - evals[hilbert_space.dressed_index((0, 6))]) / 2,
-        ])
+        E_diffs_ancilla = np.diff(evals_ancilla)[0:-1]
+        E_diffs_data = np.diff(evals_data)[0:-1]
+        E_diffs = np.concatenate((E_diffs_ancilla, E_diffs_data))
+        H1 = [jnp.asarray(drive_op_ancilla, dtype=cdtype()), ] * len(E_diffs_ancilla)
+        H1 += [jnp.asarray(drive_op_data, dtype=cdtype()), ] * len(E_diffs_data)
     elif parser_args.gate == "dephasing_parity":
         E_zero_fin = unit(jnp.sqrt(3.0) * dressed_kets["(1,0)"] - dressed_kets["(1,4)"])
         E_one_fin = unit(dressed_kets["(1,2)"] - jnp.sqrt(3.0) * dressed_kets["(1,6)"])
@@ -136,16 +140,21 @@ if __name__ == "__main__":
             (evals[hilbert_space.dressed_index((1, 4))] - evals[hilbert_space.dressed_index((0, 4))]),
             (evals[hilbert_space.dressed_index((1, 6))] - evals[hilbert_space.dressed_index((0, 6))]),
         ])
-    H1 = [jnp.asarray(drive_op_1, dtype=cdtype()), ] * len(E_diffs)
+        H1 = [jnp.asarray(drive_op_ancilla, dtype=cdtype()), ] * len(E_diffs)
+
     rng = np.random.default_rng(parser_args.rng_seed)
     init_drive_params = 2.0 * jnp.pi * (-2.0 * parser_args.scale * rng.random((len(H1), ntimes)) + parser_args.scale)
     rot_frame_drive = jnp.reshape(rot_frame_diag, (-1, 1)) - rot_frame_diag
 
+    def drive_spline_func(drive_params):
+        drive_coeffs = dx.backward_hermite_coefficients(tsave, envelope * drive_params)
+        return dx.CubicInterpolation(tsave, drive_coeffs)
+
+
     def H_func(t, drive_params, additional_args):
         H = H0
         for drive_idx in range(len(H1)):
-            drive_coeffs = dx.backward_hermite_coefficients(tsave, envelope * drive_params[drive_idx])
-            drive_spline = dx.CubicInterpolation(tsave, drive_coeffs)
+            drive_spline = drive_spline_func(drive_params[drive_idx])
             H_d = (jnp.cos(2.0 * np.pi * E_diffs[drive_idx] * t)
                    * drive_spline.evaluate(t)
                    * jnp.exp(1j * rot_frame_drive * t * 2.0 * jnp.pi)
@@ -166,3 +175,43 @@ if __name__ == "__main__":
         options=options,
         init_params_to_save=parser_args.__dict__,
     )
+
+    def H_for_plotting(t):
+        H = H0_bare
+        for drive_idx in range(len(H1)):
+            drive_spline = drive_spline_func(opt_params[drive_idx])
+            H_d = (jnp.cos(2.0 * np.pi * E_diffs[drive_idx] * t)
+                   * drive_spline.evaluate(t)
+                   * H1[drive_idx]
+                   )
+            H = H + H_d
+        return H
+
+
+    finer_times = np.linspace(0.0, parser_args.time, 401)
+    fig, ax = plt.subplots()
+    for drive in opt_params:
+        plt.plot(finer_times, 10 ** 3 * drive_spline_func(drive).evaluate(finer_times) / (2.0 * np.pi),)
+    ax.set_xlabel("time [ns]")
+    ax.set_ylabel("pulse amplitude [MHz]")
+    plt.show()
+
+    H_plot_tc = timecallable(H_for_plotting)
+    plot_result = dq.sesolve(H_plot_tc, initial_states, tsave,
+                             exp_ops=[dressed_ket(idx_1, idx_2) @ dq.dag(dressed_ket(idx_1, idx_2))
+                                      for idx_1 in range(parser_args.c_dim_1)
+                                      for idx_2 in range(parser_args.c_dim_2)])
+
+    for state_idx in range(len(initial_states)):
+        expects = plot_result.expects[state_idx]
+
+        fig, ax = plt.subplots()
+        labels = [f"({idx_1}, {idx_2})" for idx_1 in range(parser_args.c_dim_1)
+                  for idx_2 in range(parser_args.c_dim_2)]
+        for e_result, label, sty in zip(expects, labels, color_ls_alpha_cycler):
+            plt.plot(tsave, e_result, label=label, **sty)
+        ax.legend(fontsize=12, ncol=2, loc='upper left', bbox_to_anchor=(1, 1))
+        ax.set_title(f"state index {state_idx}")
+        ax.set_xlabel("time [ns]")
+        ax.set_ylabel("population")
+        plt.show()
