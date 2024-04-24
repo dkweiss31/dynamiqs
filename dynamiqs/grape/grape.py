@@ -28,6 +28,8 @@ def grape(
     tsave: ArrayLike,
     params_to_optimize: ArrayLike,
     *,
+    jump_ops=None,
+    target_states_traj: ArrayLike = None,
     additional_drive_args: ArrayLike = None,
     filepath: str = "tmp.h5py",
     optimizer: optax.GradientTransformation = optax.adam(0.1, b1=0.99, b2=0.99),
@@ -65,6 +67,8 @@ def grape(
         """
     initial_states = jnp.asarray(initial_states, dtype=cdtype())
     target_states = jnp.asarray(target_states, dtype=cdtype())
+    if jump_ops is not None:
+        target_states_traj = jnp.asarray(target_states_traj, dtype=cdtype())
     opt_state = optimizer.init(params_to_optimize)
     init_param_dict = options.__dict__ | {"tsave": tsave} | init_params_to_save
     print(f"saving results to {filepath}")
@@ -75,8 +79,10 @@ def grape(
                 params_to_optimize,
                 opt_state,
                 H,
+                jump_ops,
                 initial_states,
                 target_states,
+                target_states_traj,
                 tsave,
                 additional_drive_args,
                 solver,
@@ -131,8 +137,10 @@ def step(
     params_to_optimize,
     opt_state,
     H,
+    jump_ops,
     initial_states,
     target_states,
+    target_states_traj,
     tsave,
     additional_drive_args,
     solver,
@@ -143,14 +151,34 @@ def step(
     We have has_aux=True because loss also returns the infidelities on the side
     (want to save those numbers as they give info on which pulse was best)"""
     grads, infids = jax.grad(loss, has_aux=True)(
-        params_to_optimize, H, initial_states, target_states, tsave, additional_drive_args, solver, options
+        params_to_optimize,
+        H,
+        jump_ops,
+        initial_states,
+        target_states,
+        target_states_traj,
+        tsave,
+        additional_drive_args,
+        solver,
+        options
     )
     updates, opt_state = optimizer.update(grads, opt_state)
     params_to_optimize = optax.apply_updates(params_to_optimize, updates)
     return params_to_optimize, opt_state, infids
 
 
-def loss(params_to_optimize, H, initial_states, target_states, tsave, additional_drive_args, solver, options):
+def loss(
+    params_to_optimize,
+    H,
+    jump_ops,
+    initial_states,
+    target_states,
+    target_states_traj,
+    tsave,
+    additional_drive_args,
+    solver,
+    options
+):
     # update H using the same function but new parameters
     if additional_drive_args is not None:
 
@@ -162,12 +190,29 @@ def loss(params_to_optimize, H, initial_states, target_states, tsave, additional
     else:
         H = timecallable(H.f, args=(params_to_optimize, 0))
         results = dq.sesolve(H, initial_states, tsave, solver=solver, options=options)
-    # result.states has shape (bH?, bpsi?, nt, n, 1) and we want the states at the final time
-    final_states = results.states[..., -1, :, :]
+    final_state = results.final_state
     if options.coherent:
-        infids = infidelity_coherent(final_states, target_states)
+        infids = infidelity_coherent(final_state, target_states)
     else:
-        infids = infidelity_incoherent(final_states, target_states)
+        infids = infidelity_incoherent(final_state, target_states)
+    if jump_ops is not None:
+        H = timecallable(H.f, args=(params_to_optimize, 0))
+        mcsolve_results = dq.mcsolve(H, jump_ops, initial_states, tsave, solver=solver, options=options)
+        final_state = dq.unit(mcsolve_results.final_jump_states).swapaxes(0, 1)
+        # assuming we want same final states as without jumps
+        # annoying code repetition
+        if options.coherent:
+            infids = jnp.concatenate((
+                infids, infidelity_coherent(
+                    final_state, target_states_traj
+                )
+            ))
+        else:
+            infids = jnp.concatenate((
+                infids, infidelity_incoherent(
+                    mcsolve_results.final_jump_states, target_states_traj
+                )
+            ))
     if infids.ndim == 0:
         # for saving purposes, want this to be an Array as opposed to a float
         infids = infids[None]

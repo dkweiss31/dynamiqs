@@ -32,6 +32,7 @@ class Options(eqx.Module):
         coherent: If true, use coherent definition of the fidelity which
                   accounts for relative phases. If not, use incoherent
                   definition
+        ntraj: number of trajectories for mcsolve
     """
 
     save_states: bool = True
@@ -43,6 +44,7 @@ class Options(eqx.Module):
     target_fidelity: float
     epochs: int
     coherent: bool
+    ntraj: int
 
     def __init__(
         self,
@@ -55,6 +57,7 @@ class Options(eqx.Module):
         target_fidelity: float = 0.9995,
         epochs: int = 1000,
         coherent: bool = True,
+        ntraj: int = 10,
     ):
         self.save_states = save_states
         self.verbose = verbose
@@ -64,6 +67,7 @@ class Options(eqx.Module):
         self.target_fidelity = target_fidelity
         self.epochs = epochs
         self.coherent = coherent
+        self.ntraj = ntraj
 
         # make `save_extra` a valid Pytree with `jax.tree_util.Partial`
         if save_extra is not None:
