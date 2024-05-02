@@ -46,7 +46,10 @@ def grape(
         in the file filepath
 
         Args:
-             H _(CallableTimeArray object)_: Hamiltonian
+             H _(CallableTimeArray object)_: Hamiltonian. Assumption is that we can
+                instantiate new instances of H below by calling
+                new_H = timecallable(H.f, args=(params_to_optimize, additional_drive_args))
+                where params_to_optimize, additional_drive_args are explained below
              initial_states _(list of array-like of shape (n, 1))_: initial states
              target_states _(list of array-like of shape (n, 1))_: target states
              tsave _(array-like of shape (nt,))_: times to be passed to sesolve
@@ -56,6 +59,14 @@ def grape(
                 case, just do sesolve dynamics. In the second just do mcsolve dynamics.
                 In the third we can optimize over a combination of the unitary dynamics
                 and jump dynamics. In this case we ignore the no-jump trajectories (redundant)
+             jump_ops _(list of array-like of shape (n, n) or None)_: collapse operators
+                if we are doing mcsolve dynamics
+             target_states_traj _(list of array-like of shape (n, 1))_: target states for
+                those initial states that experience jumps
+             additional_drive_args _(into ot array-like)_: additional drive arguments
+                that should be passed as an arg to timecallable that doesn't get optimized
+                over. This is useful if you want to batch over mutliple Hamiltonian
+                instances.
              filepath _(str)_: filepath of where to save optimization results
              optimizer _(optax.GradientTransformation)_: optax optimizer to use
                 for gradient descent. Defaults to the Adam optimizer
@@ -67,6 +78,7 @@ def grape(
                     epochs, int that is the maximum number of epochs to loop over
                     target_fidelity, float where the optimization terminates if the fidelity
                     if above this value
+             init_params_to_save _(dict)_: initial parameters we want to save
         Returns:
             optimized parameters from the final timestep
         """
@@ -123,6 +135,7 @@ def save_and_print(
     epoch: int = 0,
     prev_time: float = 0.0,
 ):
+    """saves the infidelities and optimal parameters obtained at each timestep"""
     infidelities = data_dict["infidelities"]
     if type(params_to_optimize) is dict:
         data_dict = data_dict | params_to_optimize
@@ -188,6 +201,7 @@ def loss(
     options,
     grape_type,
 ):
+    """either calls sesolve or mcsolve or both depending on the type of simulation requested"""
     if options.coherent:
         infid_func = infidelity_coherent
     else:
