@@ -148,6 +148,9 @@ class SEResult(Result):
     r"""Result of the Schrödinger equation integration.
 
     Attributes:
+        states _(array of shape (..., ntsave, n, 1))_: Saved states.
+        expects _(array of shape (..., len(exp_ops), ntsave) or None)_: Saved
+            expectation values, if specified by `exp_ops`.
         states _(array of shape (nH?, npsi0?, ntsave, n, 1))_: Saved states.
         final_state _(array of shape (nH?, npsi0?, n, 1))_: Saved final state
         expects _(array of shape (nH?, npsi0?, nE, ntsave) or None)_: Saved expectation
@@ -159,7 +162,6 @@ class SEResult(Result):
         solver _(Solver)_: Solver used.
         gradient _(Gradient)_: Gradient used.
         options _(Options)_: Options used.
-        final_time _(Array)_: final solution time
 
     Notes-: Result of running multiple simulations concurrently
         The resulting states and expectation values are batched according to the
@@ -190,6 +192,7 @@ class SEResult(Result):
 
         See the [Batching simulations](../../tutorials/batching-simulations.md)
         tutorial for more details.
+        final_time _(Array)_: final solution time
     """
 
 
@@ -200,6 +203,10 @@ class MEResult(Result):
         states _(array of shape (..., ntsave, n, n))_: Saved states.
         expects _(array of shape (..., len(exp_ops), ntsave) or None)_: Saved
             expectation values, if specified by `exp_ops`.
+        states _(array of shape (nH?, nrho0?, ntsave, n, n))_: Saved states.
+        final_state _(array of shape (nH?, nrho0?, n, n))_: Saved final state
+        expects _(array of shape (nH?, nrho0?, nE, ntsave) or None)_: Saved expectation
+            values, if specified by `exp_ops`.
         extra _(PyTree or None)_: Extra data saved with `save_extra()` if
             specified in `options`.
         infos _(PyTree or None)_: Solver-dependent information on the resolution.
@@ -240,4 +247,5 @@ class MEResult(Result):
 
         See the [Batching simulations](../../tutorials/batching-simulations.md)
         tutorial for more details.
+        final_time _(Array)_: final solution time
     """

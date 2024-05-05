@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import equinox as eqx
-import jax.tree_util as jtu
+import jax
 from jax import Array
 from jaxtyping import PyTree, ScalarLike
 
@@ -73,9 +73,9 @@ class Options(eqx.Module):
         self.ntraj = ntraj
         self.one_jump_only = one_jump_only
 
-        # make `save_extra` a valid Pytree with `Partial`
+        # make `save_extra` a valid Pytree with `jax.tree_util.Partial`
         if save_extra is not None:
-            save_extra = jtu.Partial(save_extra)
+            save_extra = jax.tree_util.Partial(save_extra)
         self.save_extra = save_extra
 
     def __str__(self) -> str:
