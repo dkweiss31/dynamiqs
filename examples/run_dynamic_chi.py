@@ -11,6 +11,7 @@ from dynamiqs import generate_noise_trajectory
 from dynamiqs import sesolve
 from dynamiqs.utils.fidelity import all_X_Y_Z_states
 from dynamiqs.utils.file_io import generate_file_path
+from dynamiqs.time_array import BatchedCallable
 import diffrax as dx
 from cycler import cycler
 
@@ -140,30 +141,28 @@ if __name__ == "__main__":
             final_states_traj = all_X_Y_Z_states(final_states_traj)
 
     if parser_args.include_low_frequency_noise:
-
-        def obtain_noise_spline(idx):
-            noise_t_list, noise_shifts, _, freq_list, psd = generate_noise_trajectory(
-                parser_args.sample_rate, parser_args.time, parser_args.relative_PSD_strength,
-                parser_args.f0, parser_args.white, parser_args.rng_seed * idx
-            )
-            noise_spline_coeffs = dx.backward_hermite_coefficients(noise_t_list, noise_shifts)
-            return dx.CubicInterpolation(noise_t_list, noise_spline_coeffs)
-        additional_drive_args = jnp.arange(parser_args.num_freq_shift_trajs)
+        noise_t_list, noise_shifts, _, freq_list, psd = generate_noise_trajectory(
+            parser_args.num_freq_shift_trajs, parser_args.sample_rate,
+            parser_args.time, parser_args.relative_PSD_strength,
+            parser_args.f0, parser_args.white, parser_args.rng_seed
+        )
+        noise_coeffs = dx.backward_hermite_coefficients(
+            noise_t_list, noise_shifts.swapaxes(0, 1)
+        )
+        noise_spline = dx.CubicInterpolation(noise_t_list, noise_coeffs)
         finer_times = jnp.linspace(0.0, parser_args.time, 201)
         fig, ax = plt.subplots()
         for idx in range(parser_args.num_freq_shift_trajs):
-            _noise_spline = obtain_noise_spline(idx)
-            plt.plot(finer_times, _noise_spline.evaluate(finer_times))
+            plt.plot(finer_times, noise_spline.evaluate(finer_times)[idx])
         plt.show()
-    else:
-        additional_drive_args = None
 
     rng = np.random.default_rng(parser_args.rng_seed)
     init_drive_params = 2.0 * jnp.pi * (-2.0 * parser_args.scale * rng.random((len(H1), ntimes)) + parser_args.scale)
 
-    def _drive_at_time(t, drive_param, max_amp):
+    def _drives_at_time(t, drive_params):
+        drive_w_envelope = jnp.einsum("t,dt->dt", envelope, drive_params)
         total_drive = jnp.clip(
-            envelope * drive_param,
+            drive_w_envelope,
             a_min=-max_amp,
             a_max=max_amp,
         )
@@ -171,19 +170,20 @@ if __name__ == "__main__":
         drive_spline = dx.CubicInterpolation(tsave, drive_coeffs)
         return drive_spline.evaluate(t)
 
-    def H_func(t, drive_params, noise_idx):
-        H = H0
+    def H_func(t, drive_params):
+        drive_amps = _drives_at_time(t, drive_params)
+        drive_Hs = jnp.einsum("d,dij->ij", drive_amps, H1)
+        H = H0 + drive_Hs
         if parser_args.include_low_frequency_noise:
             # extra factor of 2 is because Aniket defines it as 2 pi sigmaz
-            noise_spline = obtain_noise_spline(noise_idx)
-            H = H + 2.0 * jnp.pi * 2.0 * noise_spline.evaluate(t) * dag(b) @ b
-        for drive_idx in range(len(H1)):
-            drive_amp = _drive_at_time(t, drive_params[drive_idx], max_amp[drive_idx])
-            H = H + drive_amp * H1[drive_idx]
+            H_freq_shift = jnp.einsum(
+                "i,jk->ijk", 2.0 * jnp.pi * 2.0 * noise_spline.evaluate(t), dag(b) @ b
+            )
+            H = H[None, :, :] + H_freq_shift
         return H
 
-
-    H_tc = timecallable(H_func, args=(init_drive_params, 0))
+    H_tc = BatchedCallable(H_func)
+    # H_tc = timecallable(H_func, args=(init_drive_params, 0))
 
     opt_params = grape(
         H_tc,
@@ -194,7 +194,6 @@ if __name__ == "__main__":
         grape_type=parser_args.grape_type,
         jump_ops=jump_ops,
         target_states_traj=final_states_traj,
-        additional_drive_args=additional_drive_args,
         filepath=filename,
         optimizer=optimizer,
         options=options,
@@ -205,15 +204,11 @@ if __name__ == "__main__":
 
         finer_times = jnp.linspace(0.0, parser_args.time, 201)
         fig, ax = plt.subplots()
+        drive_amps = _drives_at_time(finer_times, opt_params) / (2.0 * np.pi)
+        init_drive_amps = _drives_at_time(finer_times, init_drive_params) / (2.0 * np.pi)
         for drive_idx in range(len(H1)):
-            drive_amps = _drive_at_time(
-                finer_times, opt_params[drive_idx], max_amp[drive_idx]
-            ) / (2.0 * np.pi)
-            init_drive_amps = _drive_at_time(
-                finer_times, init_drive_params[drive_idx], max_amp[drive_idx]
-            ) / (2.0 * np.pi)
-            plt.plot(finer_times, drive_amps, label=f"I_{drive_idx}")
-            plt.plot(finer_times, init_drive_amps, label=f"I_{drive_idx}_init")
+            plt.plot(finer_times, drive_amps[drive_idx], label=f"I_{drive_idx}")
+            plt.plot(finer_times, init_drive_amps[drive_idx], label=f"I_{drive_idx}_init")
         plt.plot(finer_times, (np.pi / (2.0 * np.pi * tsave[-1])) * jnp.ones_like(finer_times),
                  ls="--", color="black", label="chi")
         plt.plot(finer_times, (-np.pi / (2.0 * np.pi * tsave[-1])) * jnp.ones_like(finer_times),

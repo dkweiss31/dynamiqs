@@ -5,6 +5,7 @@ from jax.random import PRNGKey
 
 
 def generate_noise_trajectory(
+        n_samples=1,
         sample_rate=1,
         t_max=200,
         relative_PSD_strength=(1e-3) ** 2,
@@ -31,19 +32,19 @@ def generate_noise_trajectory(
     # Frequency shift at each sample of time
     freq_shifts = (
         jnp.sqrt(relative_PSD_strength * sample_rate)
-        * jax.random.uniform(key, shape=(N,), minval=-0.5, maxval=0.5)
+        * jax.random.uniform(key, shape=(n_samples, N,), minval=-0.5, maxval=0.5)
     )
     # Convert to frequency domain
     freq_y_vals = fft(freq_shifts)
     freq_x_vals = fftfreq(len(freq_shifts), d=dt)
     # Filter as required
     freq_filter = all_pass_filter if white else low_pass_filter
-    freq_y_vals = jnp.multiply(freq_y_vals, freq_filter(freq_x_vals, f0, order=1))
+    freq_y_vals = jnp.einsum("ij,j->ij", freq_y_vals, freq_filter(freq_x_vals, f0, order=1))
     # Record PSD for plotting purposes
-    freq_psd_vals = jnp.abs(freq_y_vals[:N // 2]) ** 2  # Power spectral density is positive (or negative) frequency half of FFT, squared
+    freq_psd_vals = jnp.abs(freq_y_vals[..., :N // 2]) ** 2  # Power spectral density is positive (or negative) frequency half of FFT, squared
     # Convert back to time domain
     filtered_freq_shifts = jnp.real(ifft(freq_y_vals))  # Filtered freq shift at each time
-    filtered_trajectory = jnp.cumsum(filtered_freq_shifts) * dt  # Filtered total phase shift vs time
+    filtered_trajectory = jnp.cumsum(filtered_freq_shifts, axis=-1) * dt  # Filtered total phase shift vs time
     return t_list, filtered_freq_shifts, filtered_trajectory, freq_x_vals[:N // 2], freq_psd_vals
 
 

@@ -16,13 +16,13 @@ from dynamiqs.utils.file_io import append_to_h5, write_to_h5_multi
 
 from .._utils import cdtype
 from ..solver import Solver, Tsit5
-from ..time_array import CallableTimeArray, timecallable
+from ..time_array import CallableTimeArray, timecallable, BatchedCallable
 
 __all__ = ["grape"]
 
 
 def grape(
-    H: CallableTimeArray,
+    H_func: BatchedCallable,
     initial_states: ArrayLike,
     target_states: ArrayLike,
     tsave: ArrayLike,
@@ -31,7 +31,6 @@ def grape(
     grape_type="unitary",
     jump_ops=None,
     target_states_traj: ArrayLike = None,
-    additional_drive_args: ArrayLike = None,
     filepath: str = "tmp.h5py",
     optimizer: optax.GradientTransformation = optax.adam(0.1, b1=0.99, b2=0.99),
     solver: Solver = Tsit5(),
@@ -46,10 +45,10 @@ def grape(
         in the file filepath
 
         Args:
-             H _(CallableTimeArray object)_: Hamiltonian. Assumption is that we can
-                instantiate new instances of H below by calling
-                new_H = timecallable(H.f, args=(params_to_optimize, additional_drive_args))
-                where params_to_optimize, additional_drive_args are explained below
+             H_func _(BatchedCallable object)_: Hamiltonian. Assumption is that we can
+                instantiate a timecallable instance with
+                H_func = partial(H_func, drive_params=params_to_optimize)
+                H = timecallable(H_func, )
              initial_states _(list of array-like of shape (n, 1))_: initial states
              target_states _(list of array-like of shape (n, 1))_: target states
              tsave _(array-like of shape (nt,))_: times to be passed to sesolve
@@ -95,13 +94,12 @@ def grape(
             params_to_optimize, opt_state, infids = step(
                 params_to_optimize,
                 opt_state,
-                H,
+                H_func,
                 jump_ops,
                 initial_states,
                 target_states,
                 target_states_traj,
                 tsave,
-                additional_drive_args,
                 solver,
                 options,
                 optimizer,
@@ -155,13 +153,12 @@ def save_and_print(
 def step(
     params_to_optimize,
     opt_state,
-    H,
+    H_func,
     jump_ops,
     initial_states,
     target_states,
     target_states_traj,
     tsave,
-    additional_drive_args,
     solver,
     options,
     optimizer,
@@ -172,13 +169,12 @@ def step(
     (want to save those numbers as they give info on which pulse was best)"""
     grads, infids = jax.grad(loss, has_aux=True)(
         params_to_optimize,
-        H,
+        H_func,
         jump_ops,
         initial_states,
         target_states,
         target_states_traj,
         tsave,
-        additional_drive_args,
         solver,
         options,
         grape_type,
@@ -190,13 +186,12 @@ def step(
 
 def loss(
     params_to_optimize,
-    H,
+    H_func,
     jump_ops,
     initial_states,
     target_states,
     target_states_traj,
     tsave,
-    additional_drive_args,
     solver,
     options,
     grape_type,
@@ -206,30 +201,23 @@ def loss(
         infid_func = infidelity_coherent
     else:
         infid_func = infidelity_incoherent
-    if grape_type == "unitary" or grape_type == "unitary_and_jumps":
-        unitary_infids = _unitary_infids(
+    if grape_type == "unitary":
+        infids = _unitary_infids(
             params_to_optimize,
-            H,
+            H_func,
             initial_states,
             target_states,
             tsave,
-            additional_drive_args,
             solver,
             options,
             infid_func,
         )
-        if grape_type == "unitary":
-            return jnp.log(jnp.sum(unitary_infids)), unitary_infids
-    elif grape_type == "jumps" or grape_type == "unitary_and_jumps":
-        if grape_type == "jumps":
-            # don't care about the unitary part, weight jump and no jump equally
-            jump_no_jump_weights = jnp.array([1.0, 1.0])
-        else:
-            # otherwise we are doing unitary_and_jumps so don't care about no jump
-            jump_no_jump_weights = jnp.array([1.0, 0.0])
-        traj_infids = _traj_infids(
+
+    elif grape_type == "jumps":
+        jump_no_jump_weights = jnp.array([1.0, 1.0])
+        infids = _traj_infids(
             params_to_optimize,
-            H,
+            H_func,
             jump_ops,
             initial_states,
             target_states,
@@ -240,37 +228,25 @@ def loss(
             options,
             infid_func,
         )
-        if grape_type == "jumps":
-            return jnp.log(jnp.sum(traj_infids)), traj_infids
     else:
-        raise RuntimeError(f"grape_type must be unitary, jumps or unitary_and_jumps but got {grape_type}")
-    # if we made it here then grape_type==unitary_and_jumps
-    infids = jnp.concatenate((unitary_infids, traj_infids))
+        raise RuntimeError(f"grape_type must be unitary or jumps but got {grape_type}")
     return jnp.log(jnp.sum(infids)), infids
 
 
 def _unitary_infids(
     params_to_optimize,
-    H,
+    H_func,
     initial_states,
     target_states,
     tsave,
-    additional_drive_args,
     solver,
     options,
     infid_func,
 ):
     # update H using the same function but new parameters
-    if additional_drive_args is not None:
-
-        def _sesolve(idx):
-            new_H = timecallable(H.f, args=(params_to_optimize, idx))
-            return dq.sesolve(new_H, initial_states, tsave, solver=solver, options=options)
-
-        results = jax.vmap(_sesolve)(jnp.arange(len(additional_drive_args)))
-    else:
-        H = timecallable(H.f, args=(params_to_optimize, 0))
-        results = dq.sesolve(H, initial_states, tsave, solver=solver, options=options)
+    H_func = partial(H_func, drive_params=params_to_optimize)
+    H = timecallable(H_func,)
+    results = dq.sesolve(H, initial_states, tsave, solver=solver, options=options)
     infids = infid_func(results.final_state, target_states)
     if infids.ndim == 0:
         # for saving purposes, want this to be an Array as opposed to a float
@@ -280,7 +256,7 @@ def _unitary_infids(
 
 def _traj_infids(
     params_to_optimize,
-    H,
+    H_func,
     jump_ops,
     initial_states,
     target_states,
@@ -291,8 +267,8 @@ def _traj_infids(
     options,
     infid_func,
 ):
-    # right now don't allow additional_drive_args, could allow in the future
-    H = timecallable(H.f, args=(params_to_optimize, 0))
+    H_func = partial(H_func, drive_params=params_to_optimize)
+    H = timecallable(H_func, )
     mcsolve_results = dq.mcsolve(H, jump_ops, initial_states, tsave, solver=solver, options=options)
     final_jump_states = dq.unit(mcsolve_results.final_jump_states).swapaxes(0, 1)
     final_no_jump_states = dq.unit(mcsolve_results.final_no_jump_state)
