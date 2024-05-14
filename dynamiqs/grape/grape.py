@@ -283,7 +283,6 @@ def _traj_infids(
         # for saving purposes, want this to be an Array as opposed to a float
         infids_jump_avg = infids_jump_avg[None]
     if infids_no_jump.ndim == 0:
-        # for saving purposes, want this to be an Array as opposed to a float
         infids_no_jump = infids_no_jump[None]
     infids = jnp.concatenate((jump_no_jump_weights[0] * infids_jump_avg,
                               jump_no_jump_weights[1] * infids_no_jump))

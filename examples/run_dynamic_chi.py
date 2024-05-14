@@ -27,25 +27,25 @@ if __name__ == "__main__":
     parser.add_argument("--idx", default=-1, type=int, help="idx to scan over")
     parser.add_argument("--gate", default="error_parity_plus_gf", type=str,
                         help="type of gate. Can be error_parity_g, error_parity_plus, ...")
-    parser.add_argument("--grape_type", default="unitary", type=str, help="can be unitary, jumps or unitary_and_jumps")
+    parser.add_argument("--grape_type", default="jumps", type=str, help="can be unitary or jumps")
     parser.add_argument("--c_dim", default=4, type=int, help="cavity hilbert dim cutoff")
     parser.add_argument("--t_dim", default=3, type=int, help="tmon hilbert dim cutoff")
     parser.add_argument("--Kerr", default=0.100, type=float, help="transmon Kerr in GHz")
     parser.add_argument("--max_amp", default=[0.001, 0.002, 0.05, 0.05], help="max drive amp in GHz")
-    parser.add_argument("--dt", default=20.0, type=float, help="time step for controls")
-    parser.add_argument("--time", default=700.0, type=float, help="gate time")
+    parser.add_argument("--dt", default=10.0, type=float, help="time step for controls")
+    parser.add_argument("--time", default=800.0, type=float, help="gate time")
     parser.add_argument("--ramp_nts", default=4, type=int, help="numper of points in ramps")
     parser.add_argument("--scale", default=1e-5, type=float, help="randomization scale for initial pulse")
-    parser.add_argument("--learning_rate", default=0.0005, type=float, help="learning rate for ADAM optimize")
-    parser.add_argument("--b1", default=0.999, type=float, help="decay of learning rate first moment")
-    parser.add_argument("--b2", default=0.999, type=float, help="decay of learning rate second moment")
+    parser.add_argument("--learning_rate", default=0.0003, type=float, help="learning rate for ADAM optimize")
+    parser.add_argument("--b1", default=0.99, type=float, help="decay of learning rate first moment")
+    parser.add_argument("--b2", default=0.99, type=float, help="decay of learning rate second moment")
     parser.add_argument("--coherent", default=0, type=int, help="which fidelity metric to use")
     parser.add_argument("--epochs", default=2000, type=int, help="number of epochs")
     parser.add_argument("--target_fidelity", default=0.990, type=float, help="target fidelity")
     parser.add_argument("--rng_seed", default=854, type=int, help="rng seed for random initial pulses")  # 87336259
-    parser.add_argument("--include_low_frequency_noise", default=1, type=int,
+    parser.add_argument("--include_low_frequency_noise", default=0, type=int,
                         help="whether to batch over different realizations of low-frequency noise")
-    parser.add_argument("--num_freq_shift_trajs", default=5, type=int,
+    parser.add_argument("--num_freq_shift_trajs", default=20, type=int,
                         help="number of trajectories to sample low-frequency noise for")
     parser.add_argument("--sample_rate", default=1.0, type=float, help="rate at which to sample noise (in us^-1)")
     parser.add_argument("--relative_PSD_strength", default=1e-6, type=float,
@@ -99,7 +99,7 @@ if __name__ == "__main__":
     # H1 = [dag(a) @ a @ e_proj, dag(a) @ a @ f_proj, b + dag(b), 1j * (b - dag(b))]
     # H1 = [dag(a) @ a @ dag(b) @ b, b + dag(b), 1j * (b - dag(b))]
     # H1 = [dag(a) @ a @ dag(b) @ b, ]
-    if parser_args.T1 != np.inf:
+    if parser_args.grape_type == "jumps":
         jump_ops = [jnp.sqrt(1. / parser_args.T1) * b, ]
     else:
         jump_ops = None
@@ -259,7 +259,7 @@ if __name__ == "__main__":
         Z_labels = [f"Z_{c_idx}" for c_idx in range(c_dim)]
         labels = X_labels + Y_labels + Z_labels
 
-        if parser_args.T1 != np.inf:
+        if parser_args.grape_type == "jumps":
             result = mcsolve(H_tc, jump_ops, initial_states, finer_times, exp_ops=exp_ops)
         else:
             result = sesolve(H_tc, initial_states, finer_times, exp_ops=exp_ops)
@@ -267,7 +267,10 @@ if __name__ == "__main__":
         for state_idx in range(len(initial_states)):
             fig, ax = plt.subplots()
             # plot the first noisy trajectory
-            expects = result.expects[0][state_idx]
+            if parser_args.include_low_frequency_noise:
+                expects = result.expects[0][state_idx]
+            else:
+                expects = result.expects[state_idx]
             for e_result, label, sty in zip(expects, labels, color_ls_alpha_cycler):
                 plt.plot(finer_times, e_result, label=label, **sty)
             ax.legend()
