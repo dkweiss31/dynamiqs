@@ -1,4 +1,5 @@
 import argparse
+from functools import partial
 
 import jax
 import jax.numpy as jnp
@@ -11,7 +12,6 @@ from dynamiqs import generate_noise_trajectory
 from dynamiqs import sesolve
 from dynamiqs.utils.fidelity import all_X_Y_Z_states
 from dynamiqs.utils.file_io import generate_file_path
-from dynamiqs.time_array import BatchedCallable
 import diffrax as dx
 from cycler import cycler
 
@@ -27,7 +27,7 @@ if __name__ == "__main__":
     parser.add_argument("--idx", default=-1, type=int, help="idx to scan over")
     parser.add_argument("--gate", default="error_parity_plus_gf", type=str,
                         help="type of gate. Can be error_parity_g, error_parity_plus, ...")
-    parser.add_argument("--grape_type", default="jumps", type=str, help="can be unitary, jumps or unitary_and_jumps")
+    parser.add_argument("--grape_type", default="unitary", type=str, help="can be unitary, jumps or unitary_and_jumps")
     parser.add_argument("--c_dim", default=4, type=int, help="cavity hilbert dim cutoff")
     parser.add_argument("--t_dim", default=3, type=int, help="tmon hilbert dim cutoff")
     parser.add_argument("--Kerr", default=0.100, type=float, help="transmon Kerr in GHz")
@@ -43,7 +43,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", default=2000, type=int, help="number of epochs")
     parser.add_argument("--target_fidelity", default=0.990, type=float, help="target fidelity")
     parser.add_argument("--rng_seed", default=854, type=int, help="rng seed for random initial pulses")  # 87336259
-    parser.add_argument("--include_low_frequency_noise", default=0, type=int,
+    parser.add_argument("--include_low_frequency_noise", default=1, type=int,
                         help="whether to batch over different realizations of low-frequency noise")
     parser.add_argument("--num_freq_shift_trajs", default=5, type=int,
                         help="number of trajectories to sample low-frequency noise for")
@@ -147,31 +147,34 @@ if __name__ == "__main__":
             parser_args.f0, parser_args.white, parser_args.rng_seed
         )
         noise_coeffs = dx.backward_hermite_coefficients(
-            noise_t_list, noise_shifts.swapaxes(0, 1)
+            noise_t_list, noise_shifts
         )
         noise_spline = dx.CubicInterpolation(noise_t_list, noise_coeffs)
         finer_times = jnp.linspace(0.0, parser_args.time, 201)
         fig, ax = plt.subplots()
         for idx in range(parser_args.num_freq_shift_trajs):
-            plt.plot(finer_times, noise_spline.evaluate(finer_times)[idx])
+            noise_amp = jnp.asarray([noise_spline.evaluate(t)[idx] for t in finer_times])
+            plt.plot(finer_times, noise_amp)
         plt.show()
 
     rng = np.random.default_rng(parser_args.rng_seed)
     init_drive_params = 2.0 * jnp.pi * (-2.0 * parser_args.scale * rng.random((len(H1), ntimes)) + parser_args.scale)
 
-    def _drives_at_time(t, drive_params):
-        drive_w_envelope = jnp.einsum("t,dt->dt", envelope, drive_params)
+    def _drive_spline(drive_params):
+        # note swap of axes so that time axis is first
+        drive_w_envelope = jnp.einsum("t,dt->td", envelope, drive_params)
         total_drive = jnp.clip(
             drive_w_envelope,
-            a_min=-max_amp,
-            a_max=max_amp,
+            a_min=-max_amp[None, :],
+            a_max=max_amp[None, :],
         )
         drive_coeffs = dx.backward_hermite_coefficients(tsave, total_drive)
         drive_spline = dx.CubicInterpolation(tsave, drive_coeffs)
-        return drive_spline.evaluate(t)
+        return drive_spline
 
     def H_func(t, drive_params):
-        drive_amps = _drives_at_time(t, drive_params)
+        drive_spline = _drive_spline(drive_params)
+        drive_amps = drive_spline.evaluate(t)
         drive_Hs = jnp.einsum("d,dij->ij", drive_amps, H1)
         H = H0 + drive_Hs
         if parser_args.include_low_frequency_noise:
@@ -182,7 +185,7 @@ if __name__ == "__main__":
             H = H[None, :, :] + H_freq_shift
         return H
 
-    H_tc = BatchedCallable(H_func)
+    H_tc = jax.tree_util.Partial(H_func)
     # H_tc = timecallable(H_func, args=(init_drive_params, 0))
 
     opt_params = grape(
@@ -203,12 +206,15 @@ if __name__ == "__main__":
     if parser_args.plot:
 
         finer_times = jnp.linspace(0.0, parser_args.time, 201)
+        drive_spline = _drive_spline(opt_params)
+        init_drive_spline = _drive_spline(init_drive_params)
+        drive_amps = jnp.asarray([drive_spline.evaluate(t) for t in finer_times]).swapaxes(0, 1)
+        init_drive_amps = jnp.asarray([init_drive_spline.evaluate(t) for t in finer_times]).swapaxes(0, 1)
+
         fig, ax = plt.subplots()
-        drive_amps = _drives_at_time(finer_times, opt_params) / (2.0 * np.pi)
-        init_drive_amps = _drives_at_time(finer_times, init_drive_params) / (2.0 * np.pi)
         for drive_idx in range(len(H1)):
-            plt.plot(finer_times, drive_amps[drive_idx], label=f"I_{drive_idx}")
-            plt.plot(finer_times, init_drive_amps[drive_idx], label=f"I_{drive_idx}_init")
+            plt.plot(finer_times, drive_amps[drive_idx]/(2.0*np.pi), label=f"I_{drive_idx}")
+            plt.plot(finer_times, init_drive_amps[drive_idx]/(2.0*np.pi), label=f"I_{drive_idx}_init")
         plt.plot(finer_times, (np.pi / (2.0 * np.pi * tsave[-1])) * jnp.ones_like(finer_times),
                  ls="--", color="black", label="chi")
         plt.plot(finer_times, (-np.pi / (2.0 * np.pi * tsave[-1])) * jnp.ones_like(finer_times),
@@ -224,7 +230,9 @@ if __name__ == "__main__":
             ket = tensor(basis(c_dim, c_idx), basis(t_dim, t_idx))
             return ket @ dag(ket)
 
-        H_opt = H_tc = timecallable(H_func, args=(opt_params, 0))
+
+        H_func = partial(H_func, drive_params=opt_params)
+        H_tc = timecallable(H_func, )
         if parser_args.gate == "error_parity_plus_gf":
             e_idx = 2
         else:
@@ -258,7 +266,8 @@ if __name__ == "__main__":
 
         for state_idx in range(len(initial_states)):
             fig, ax = plt.subplots()
-            expects = result.expects[state_idx]
+            # plot the first noisy trajectory
+            expects = result.expects[0][state_idx]
             for e_result, label, sty in zip(expects, labels, color_ls_alpha_cycler):
                 plt.plot(finer_times, e_result, label=label, **sty)
             ax.legend()

@@ -45,7 +45,7 @@ def grape(
         in the file filepath
 
         Args:
-             H_func _(BatchedCallable object)_: Hamiltonian. Assumption is that we can
+             H_func _(PyTree object)_: Hamiltonian. Assumption is that we can
                 instantiate a timecallable instance with
                 H_func = partial(H_func, drive_params=params_to_optimize)
                 H = timecallable(H_func, )
