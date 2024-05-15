@@ -32,8 +32,8 @@ if __name__ == "__main__":
     parser.add_argument("--t_dim", default=3, type=int, help="tmon hilbert dim cutoff")
     parser.add_argument("--Kerr", default=0.100, type=float, help="transmon Kerr in GHz")
     parser.add_argument("--max_amp", default=[0.001, 0.002, 0.05, 0.05], help="max drive amp in GHz")
-    parser.add_argument("--dt", default=10.0, type=float, help="time step for controls")
-    parser.add_argument("--time", default=800.0, type=float, help="gate time")
+    parser.add_argument("--dt", default=5.0, type=float, help="time step for controls")
+    parser.add_argument("--time", default=600.0, type=float, help="gate time")
     parser.add_argument("--ramp_nts", default=4, type=int, help="numper of points in ramps")
     parser.add_argument("--scale", default=1e-5, type=float, help="randomization scale for initial pulse")
     parser.add_argument("--learning_rate", default=0.0003, type=float, help="learning rate for ADAM optimize")
@@ -42,10 +42,10 @@ if __name__ == "__main__":
     parser.add_argument("--coherent", default=0, type=int, help="which fidelity metric to use")
     parser.add_argument("--epochs", default=2000, type=int, help="number of epochs")
     parser.add_argument("--target_fidelity", default=0.990, type=float, help="target fidelity")
-    parser.add_argument("--rng_seed", default=854, type=int, help="rng seed for random initial pulses")  # 87336259
-    parser.add_argument("--include_low_frequency_noise", default=0, type=int,
+    parser.add_argument("--rng_seed", default=954, type=int, help="rng seed for random initial pulses")  # 87336259
+    parser.add_argument("--include_low_frequency_noise", default=1, type=int,
                         help="whether to batch over different realizations of low-frequency noise")
-    parser.add_argument("--num_freq_shift_trajs", default=20, type=int,
+    parser.add_argument("--num_freq_shift_trajs", default=10, type=int,
                         help="number of trajectories to sample low-frequency noise for")
     parser.add_argument("--sample_rate", default=1.0, type=float, help="rate at which to sample noise (in us^-1)")
     parser.add_argument("--relative_PSD_strength", default=1e-6, type=float,
@@ -54,7 +54,7 @@ if __name__ == "__main__":
     parser.add_argument("--white", default=0, type=int, help="white or 1/f noise")
     parser.add_argument("--T1", default=10000, type=float, help="T1 of the transmon in ns. If not infinity, "
                                                                  "includes jumps")
-    parser.add_argument("--ntraj", default=20, type=int, help="number of jump trajectories")
+    parser.add_argument("--ntraj", default=10, type=int, help="number of jump trajectories")
     parser.add_argument("--plot", default=True, type=bool, help="plot the results?")
     parser_args = parser.parse_args()
     if parser_args.idx == -1:
@@ -129,7 +129,7 @@ if __name__ == "__main__":
                                unit(basis(t_dim, 0) + (-1) ** (c_idx % 2) * basis(t_dim, 2)))
                         for c_idx in range(2)]
         final_states_traj = [
-            tensor(basis(c_dim, c_idx), basis(t_dim, 1)) for c_idx in range(2)
+            (-1)**(c_idx % 2) * tensor(basis(c_dim, c_idx), basis(t_dim, 1)) for c_idx in range(2)
         ]
     else:
         raise RuntimeError("gate type not supported")

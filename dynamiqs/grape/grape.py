@@ -270,7 +270,7 @@ def _traj_infids(
     H_func = partial(H_func, drive_params=params_to_optimize)
     H = timecallable(H_func, )
     mcsolve_results = dq.mcsolve(H, jump_ops, initial_states, tsave, solver=solver, options=options)
-    final_jump_states = dq.unit(mcsolve_results.final_jump_states).swapaxes(0, 1)
+    final_jump_states = dq.unit(mcsolve_results.final_jump_states).swapaxes(-4, -3)
     final_no_jump_states = dq.unit(mcsolve_results.final_no_jump_state)
     infids_jump = infid_func(
         final_jump_states, target_states_jump
