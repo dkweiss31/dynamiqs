@@ -27,11 +27,15 @@ if __name__ == "__main__":
     parser.add_argument("--idx", default=-1, type=int, help="idx to scan over")
     parser.add_argument("--gate", default="error_parity_plus_gf", type=str,
                         help="type of gate. Can be error_parity_g, error_parity_plus, ...")
-    parser.add_argument("--grape_type", default="jumps", type=str, help="can be unitary or jumps")
+    parser.add_argument("--grape_type", default="unitary", type=str, help="can be unitary or jumps")
     parser.add_argument("--c_dim", default=4, type=int, help="cavity hilbert dim cutoff")
     parser.add_argument("--t_dim", default=3, type=int, help="tmon hilbert dim cutoff")
     parser.add_argument("--Kerr", default=0.100, type=float, help="transmon Kerr in GHz")
-    parser.add_argument("--max_amp", default=[0.001, 0.002, 0.05, 0.05], help="max drive amp in GHz")
+    parser.add_argument(
+        "--max_amp",
+        default=[0.001, 0.002, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05],
+        help="max drive amp in GHz"
+    )
     parser.add_argument("--dt", default=5.0, type=float, help="time step for controls")
     parser.add_argument("--time", default=600.0, type=float, help="gate time")
     parser.add_argument("--ramp_nts", default=4, type=int, help="numper of points in ramps")
@@ -42,15 +46,15 @@ if __name__ == "__main__":
     parser.add_argument("--coherent", default=0, type=int, help="which fidelity metric to use")
     parser.add_argument("--epochs", default=2000, type=int, help="number of epochs")
     parser.add_argument("--target_fidelity", default=0.990, type=float, help="target fidelity")
-    parser.add_argument("--rng_seed", default=954, type=int, help="rng seed for random initial pulses")  # 87336259
+    parser.add_argument("--rng_seed", default=654, type=int, help="rng seed for random initial pulses")  # 87336259
     parser.add_argument("--include_low_frequency_noise", default=1, type=int,
                         help="whether to batch over different realizations of low-frequency noise")
-    parser.add_argument("--num_freq_shift_trajs", default=10, type=int,
+    parser.add_argument("--num_freq_shift_trajs", default=101, type=int,
                         help="number of trajectories to sample low-frequency noise for")
     parser.add_argument("--sample_rate", default=1.0, type=float, help="rate at which to sample noise (in us^-1)")
-    parser.add_argument("--relative_PSD_strength", default=1e-6, type=float,
+    parser.add_argument("--relative_PSD_strength", default=1e-4, type=float,
                         help="std-dev of frequency shifts given by sqrt(relative_PSD_strength * sample_rate)")
-    parser.add_argument("--f0", default=1e-2, type=float, help="cutoff frequency for 1/f noise (in us^-1)")
+    parser.add_argument("--f0", default=1e-3, type=float, help="cutoff frequency for 1/f noise (in us^-1)")
     parser.add_argument("--white", default=0, type=int, help="white or 1/f noise")
     parser.add_argument("--T1", default=10000, type=float, help="T1 of the transmon in ns. If not infinity, "
                                                                  "includes jumps")
@@ -95,7 +99,11 @@ if __name__ == "__main__":
     ef_proj = tensor(eye(c_dim), basis(t_dim, 1) @ dag(basis(t_dim, 2)))
     # H0 = -2.0 * jnp.pi * parser_args.Kerr * 0.5 * dag(b) @ dag(b) @ b @ b
     H0 = 0.0 * b
-    H1 = [dag(a) @ a @ e_proj, dag(a) @ a @ f_proj, gf_proj + dag(gf_proj), 1j * (gf_proj - dag(gf_proj))]
+    H1 = [dag(a) @ a @ e_proj, dag(a) @ a @ f_proj,
+          gf_proj + dag(gf_proj), 1j * (gf_proj - dag(gf_proj)),
+          ge_proj + dag(ge_proj), 1j * (ge_proj - dag(ge_proj)),
+          ef_proj + dag(ef_proj), 1j * (ef_proj - dag(ef_proj)),
+          ]
     # H1 = [dag(a) @ a @ e_proj, dag(a) @ a @ f_proj, b + dag(b), 1j * (b - dag(b))]
     # H1 = [dag(a) @ a @ dag(b) @ b, b + dag(b), 1j * (b - dag(b))]
     # H1 = [dag(a) @ a @ dag(b) @ b, ]
@@ -141,11 +149,36 @@ if __name__ == "__main__":
             final_states_traj = all_X_Y_Z_states(final_states_traj)
 
     if parser_args.include_low_frequency_noise:
-        noise_t_list, noise_shifts, _, freq_list, psd = generate_noise_trajectory(
+        noise_t_list, noise_shifts, traj, freq_list, psd = generate_noise_trajectory(
             parser_args.num_freq_shift_trajs, parser_args.sample_rate,
             parser_args.time, parser_args.relative_PSD_strength,
             parser_args.f0, parser_args.white, parser_args.rng_seed
         )
+        psd = jnp.mean(psd, axis=-1)
+        std_dev_trajectory = np.std(traj, axis=-1)
+        fig, ax = plt.subplots()
+        plt.loglog(freq_list, psd)
+        plt.ylabel(r"Power spectral density [$\mu$s$^{-1}$]")
+        plt.xlabel("Noise frequency [MHz]")
+        plt.grid()
+        plt.tight_layout()
+        plt.show()
+
+        fig, ax = plt.subplots()
+        for idx in range(parser_args.num_freq_shift_trajs):
+            plt.plot(noise_t_list, traj[:, idx])
+        plt.plot(noise_t_list, np.sqrt(noise_t_list * parser_args.relative_PSD_strength), 'k--', label=r'Expected $\sqrt{PSD}$')
+        plt.plot(noise_t_list, -np.sqrt(noise_t_list * parser_args.relative_PSD_strength), 'k--')
+
+        plt.plot(noise_t_list, std_dev_trajectory, 'k', label=r'Trajectory std. dev.')
+        plt.plot(noise_t_list, -std_dev_trajectory, 'k')
+
+        plt.title('1/f noise trajectories', pad=10)
+        plt.xlabel(r"Time [$\mu$s]", labelpad=12)
+        plt.ylabel(r"Phase shift / $2\pi$", labelpad=12)
+        plt.legend(loc='upper left')
+        plt.tight_layout()
+        plt.show()
         noise_coeffs = dx.backward_hermite_coefficients(
             noise_t_list, noise_shifts
         )
@@ -154,7 +187,10 @@ if __name__ == "__main__":
         fig, ax = plt.subplots()
         for idx in range(parser_args.num_freq_shift_trajs):
             noise_amp = jnp.asarray([noise_spline.evaluate(t)[idx] for t in finer_times])
-            plt.plot(finer_times, noise_amp)
+            plt.plot(finer_times, 10**3 * noise_amp)
+        plt.xlabel("time [ns]")
+        plt.ylabel("amplitude [MHz]")
+        plt.tight_layout()
         plt.show()
 
     rng = np.random.default_rng(parser_args.rng_seed)
@@ -214,7 +250,7 @@ if __name__ == "__main__":
         fig, ax = plt.subplots()
         for drive_idx in range(len(H1)):
             plt.plot(finer_times, drive_amps[drive_idx]/(2.0*np.pi), label=f"I_{drive_idx}")
-            plt.plot(finer_times, init_drive_amps[drive_idx]/(2.0*np.pi), label=f"I_{drive_idx}_init")
+            # plt.plot(finer_times, init_drive_amps[drive_idx]/(2.0*np.pi), label=f"I_{drive_idx}_init")
         plt.plot(finer_times, (np.pi / (2.0 * np.pi * tsave[-1])) * jnp.ones_like(finer_times),
                  ls="--", color="black", label="chi")
         plt.plot(finer_times, (-np.pi / (2.0 * np.pi * tsave[-1])) * jnp.ones_like(finer_times),
