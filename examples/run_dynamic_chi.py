@@ -27,7 +27,7 @@ if __name__ == "__main__":
     parser.add_argument("--idx", default=-1, type=int, help="idx to scan over")
     parser.add_argument("--gate", default="error_parity_plus_gf", type=str,
                         help="type of gate. Can be error_parity_g, error_parity_plus, ...")
-    parser.add_argument("--grape_type", default="jumps", type=str, help="can be unitary or jumps")
+    parser.add_argument("--grape_type", default="unitary", type=str, help="can be unitary or jumps")
     parser.add_argument("--c_dim", default=4, type=int, help="cavity hilbert dim cutoff")
     parser.add_argument("--t_dim", default=3, type=int, help="tmon hilbert dim cutoff")
     parser.add_argument("--Kerr", default=0.100, type=float, help="transmon Kerr in GHz")
