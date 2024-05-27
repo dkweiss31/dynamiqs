@@ -12,3 +12,6 @@ from .grape import *
 
 # get version from pyproject.toml
 __version__ = version(__package__)
+
+# set default matmul precision to 'highest'
+set_matmul_precision('highest')
