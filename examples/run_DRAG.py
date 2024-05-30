@@ -1,5 +1,6 @@
 import argparse
 
+import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
@@ -88,7 +89,7 @@ if __name__ == "__main__":
         drive_spline = dx.CubicInterpolation(tsave, drive_coeffs)
         return drive_spline.evaluate(t)
 
-    def H_func(t, drive_params, additional_drive_arg):
+    def H_func(t, drive_params):
         H = H0
         for drive_idx in range(len(H1)):
             drive_amp = _drive_at_time(t, drive_params[drive_idx], max_amp[drive_idx])
@@ -96,7 +97,8 @@ if __name__ == "__main__":
         return H
 
 
-    H_tc = timecallable(H_func, args=(init_drive_params, 0))
+    # H_tc = timecallable(H_func, args=(init_drive_params, 0))
+    H_tc = jax.tree_util.Partial(H_func)
 
     opt_params = grape(
         H_tc,
