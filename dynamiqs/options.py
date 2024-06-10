@@ -6,7 +6,6 @@ from jax import Array
 from jaxtyping import PyTree, ScalarLike
 
 from ._utils import tree_str_inline
-from .progress_meter import AbstractProgressMeter, TqdmProgressMeter
 
 __all__ = ['Options']
 
@@ -40,7 +39,6 @@ class Options(eqx.Module):
     save_states: bool = True
     verbose: bool = True
     cartesian_batching: bool = True
-    progress_bar: AbstractProgressMeter = None
     t0: ScalarLike | None = None
     t1: ScalarLike | None
     save_extra: callable[[Array], PyTree] | None = None
@@ -55,7 +53,6 @@ class Options(eqx.Module):
         save_states: bool = True,
         verbose: bool = True,
         cartesian_batching: bool = True,
-        progress_bar: AbstractProgressMeter = None,
         t0: ScalarLike | None = None,
         t1: ScalarLike | None = None,
         save_extra: callable[[Array], PyTree] | None = None,
@@ -65,13 +62,9 @@ class Options(eqx.Module):
         ntraj: int = 10,
         one_jump_only: bool = True
     ):
-        if progress_bar is None:
-            progress_bar = TqdmProgressMeter()
-
         self.save_states = save_states
         self.verbose = verbose
         self.cartesian_batching = cartesian_batching
-        self.progress_bar = progress_bar
         self.t0 = t0
         self.t1 = t1
         self.target_fidelity = target_fidelity
