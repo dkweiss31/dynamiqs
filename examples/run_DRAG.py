@@ -1,4 +1,5 @@
 import argparse
+from functools import partial
 
 import jax
 import jax.numpy as jnp
@@ -131,8 +132,7 @@ if __name__ == "__main__":
         plt.savefig(filename[:-5]+"_pulse.pdf")
         plt.show()
 
-
-        H_opt = H_tc = timecallable(H_func, args=(opt_params, 0))
+        H_tc = timecallable(partial(H_func, drive_params=opt_params), )
         result = sesolve(H_tc, initial_states, finer_times,
                          exp_ops=[basis(dim, idx) @ dag(basis(dim, idx)) for idx in range(dim)])
         init_labels = [r"$|0\rangle$", r"$|0\rangle+|1\rangle$", r"$|0\rangle+i|1\rangle$", r"$|1\rangle$"]

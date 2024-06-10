@@ -11,4 +11,4 @@ from .mcsolve import *
 from .grape import *
 
 # get version from pyproject.toml
-__version__ = version(__package__)
+# __version__ = version(__package__)
