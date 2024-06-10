@@ -6,7 +6,7 @@ from jax import Array
 from jaxtyping import PyTree, ScalarLike
 
 from ._utils import tree_str_inline
-from .progress_meter import AbstractProgressMeter, NoProgressMeter, TqdmProgressMeter
+from .progress_meter import AbstractProgressMeter, TqdmProgressMeter
 
 __all__ = ['Options']
 
@@ -22,12 +22,6 @@ class Options(eqx.Module):
         cartesian_batching: If `True`, batched arguments are treated as separated
             batch dimensions, otherwise the batching is performed over a single
             shared batched dimension.
-        progress_meter: Progress meter indicating how far the solve has progressed.
-            Defaults to a [tqdm](https://github.com/tqdm/tqdm) progress meter. Pass
-            `None` for no output, see other options in
-            [dynamiqs/progress_meter.py](https://github.com/dynamiqs/dynamiqs/blob/main/dynamiqs/progress_meter.py).
-            If gradients are computed, the progress meter only displays during the
-            forward pass.
         t0: Initial time. If `None`, defaults to the first time in `tsave`.
         t1: Final time. If `None`, defaults to the last time in `tsave`.
         save_extra _(function, optional)_: A function with signature
@@ -46,7 +40,7 @@ class Options(eqx.Module):
     save_states: bool = True
     verbose: bool = True
     cartesian_batching: bool = True
-    progress_meter: AbstractProgressMeter | None = TqdmProgressMeter()
+    progress_bar: AbstractProgressMeter = None
     t0: ScalarLike | None = None
     t1: ScalarLike | None
     save_extra: callable[[Array], PyTree] | None = None
@@ -61,7 +55,7 @@ class Options(eqx.Module):
         save_states: bool = True,
         verbose: bool = True,
         cartesian_batching: bool = True,
-        progress_meter: AbstractProgressMeter | None = TqdmProgressMeter(),  # noqa: B008
+        progress_bar: AbstractProgressMeter = None,
         t0: ScalarLike | None = None,
         t1: ScalarLike | None = None,
         save_extra: callable[[Array], PyTree] | None = None,
@@ -71,13 +65,13 @@ class Options(eqx.Module):
         ntraj: int = 10,
         one_jump_only: bool = True
     ):
-        if progress_meter is None:
-            progress_meter = NoProgressMeter()
+        if progress_bar is None:
+            progress_bar = TqdmProgressMeter()
 
         self.save_states = save_states
         self.verbose = verbose
         self.cartesian_batching = cartesian_batching
-        self.progress_meter = progress_meter
+        self.progress_bar = progress_bar
         self.t0 = t0
         self.t1 = t1
         self.target_fidelity = target_fidelity
