@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import equinox as eqx
-import jax.numpy as jnp
 from jax import Array
 
 _is_perfect_square = lambda n: int(n**0.5) ** 2 == n
@@ -83,11 +82,3 @@ def check_times(x: Array, argname: str, allow_empty: bool = False) -> Array:
         x[1:] < x[:-1],
         f'Argument {argname} must be sorted in strictly ascending order.',
     )
-
-
-def check_type_int(x: Array, argname: str):
-    if not jnp.issubdtype(x.dtype, jnp.integer):
-        raise ValueError(
-            f'Argument {argname} must be of type integer, but is of type'
-            f' {argname}.dtype={x.dtype}.'
-        )
