@@ -27,6 +27,8 @@ if __name__ == "__main__":
     parser.add_argument("--idx", default=-1, type=int, help="idx to scan over")
     parser.add_argument("--gate", default="error_parity_plus_gf", type=str,
                         help="type of gate. Can be error_parity_g, error_parity_plus, ...")
+    parser.add_argument("--drive_type", default="chi_gf", type=str,
+                        help="type of drives. Can be chi_gf, chi_gef or gbs. Doesn't change")
     parser.add_argument("--grape_type", default="unitary", type=str, help="can be unitary or jumps")
     parser.add_argument("--c_dim", default=3, type=int, help="cavity hilbert dim cutoff")
     parser.add_argument("--t_dim", default=3, type=int, help="tmon hilbert dim cutoff")
@@ -101,17 +103,18 @@ if __name__ == "__main__":
     gf_proj = tensor(eye(c_dim), basis(t_dim, 0) @ dag(basis(t_dim, 2)))
     ge_proj = tensor(eye(c_dim), basis(t_dim, 0) @ dag(basis(t_dim, 1)))
     ef_proj = tensor(eye(c_dim), basis(t_dim, 1) @ dag(basis(t_dim, 2)))
-    # H0 = -2.0 * jnp.pi * parser_args.Kerr * 0.5 * dag(b) @ dag(b) @ b @ b
-    H0 = 0.0 * b
-    # H1 = [dag(a) @ a @ f_proj, gf_proj + dag(gf_proj), 1j * (gf_proj - dag(gf_proj)), ]
-    H1 = [dag(a) @ a @ e_proj, dag(a) @ a @ f_proj,
-          gf_proj + dag(gf_proj), 1j * (gf_proj - dag(gf_proj)),
-          ge_proj + dag(ge_proj), 1j * (ge_proj - dag(ge_proj)),
-          ef_proj + dag(ef_proj), 1j * (ef_proj - dag(ef_proj)),
-          ]
-    # H1 = [dag(a) @ a @ e_proj, dag(a) @ a @ f_proj, b + dag(b), 1j * (b - dag(b))]
-    # H1 = [dag(a) @ a @ dag(b) @ b, b + dag(b), 1j * (b - dag(b))]
-    # H1 = [dag(a) @ a @ dag(b) @ b, ]
+    if parser_args.drive_type == "chi_ge":
+        H0 = 0.0 * b
+        H1 = [dag(a) @ a @ f_proj, gf_proj + dag(gf_proj), 1j * (gf_proj - dag(gf_proj)), ]
+    elif parser_args.drive_type == "chi_gef":
+        H0 = 0.0 * b
+        H1 = [dag(a) @ a @ e_proj, dag(a) @ a @ f_proj,
+              gf_proj + dag(gf_proj), 1j * (gf_proj - dag(gf_proj)),
+              ge_proj + dag(ge_proj), 1j * (ge_proj - dag(ge_proj)),
+              ef_proj + dag(ef_proj), 1j * (ef_proj - dag(ef_proj)),
+              ]
+    elif parser_args.drive_type == "gbs":
+        pass
     if parser_args.grape_type == "jumps":
         jump_ops = [jnp.sqrt(1. / parser_args.T1) * b, ]
     else:
@@ -194,7 +197,7 @@ if __name__ == "__main__":
         fig, ax = plt.subplots()
         for idx in range(parser_args.num_freq_shift_trajs):
             noise_amp = jnp.asarray([noise_spline.evaluate(t)[idx] for t in finer_times])
-            plt.plot(finer_times, 10**3 * noise_amp)
+            plt.plot(finer_times, 10 ** 3 * noise_amp)
         plt.xlabel("time [ns]")
         plt.ylabel("amplitude [MHz]")
         plt.tight_layout()
