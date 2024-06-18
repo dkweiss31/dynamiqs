@@ -11,7 +11,7 @@ from dynamiqs import Options, grape, timecallable, dag, tensor, basis, destroy, 
 from dynamiqs import generate_noise_trajectory
 from dynamiqs import sesolve
 from dynamiqs.utils.fidelity import all_X_Y_Z_states, infidelity_incoherent
-from dynamiqs.utils.file_io import generate_file_path
+from dynamiqs.utils.file_io import generate_file_path, extract_info_from_h5
 import diffrax as dx
 from cycler import cycler
 
@@ -37,10 +37,10 @@ if __name__ == "__main__":
         default=[0.0012, 0.05, 0.05],
         help="max drive amp in GHz"
     )
-    parser.add_argument("--dt", default=5.0, type=float, help="time step for controls")
+    parser.add_argument("--dt", default=20.0, type=float, help="time step for controls")
     parser.add_argument("--time", default=800.0, type=float, help="gate time")
     parser.add_argument("--ramp_nts", default=2, type=int, help="numper of points in ramps")
-    parser.add_argument("--scale", default=1e-5, type=float, help="randomization scale for initial pulse")
+    parser.add_argument("--scale", default=5e-3, type=float, help="randomization scale for initial pulse")
     parser.add_argument("--learning_rate", default=0.0006, type=float, help="learning rate for ADAM optimize")
     parser.add_argument("--b1", default=0.999, type=float, help="decay of learning rate first moment")
     parser.add_argument("--b2", default=0.999, type=float, help="decay of learning rate second moment")
@@ -61,6 +61,9 @@ if __name__ == "__main__":
                                                                  "includes jumps")
     parser.add_argument("--ntraj", default=10, type=int, help="number of jump trajectories")
     parser.add_argument("--plot", default=True, type=bool, help="plot the results?")
+    parser.add_argument("--initial_pulse_filepath",
+                        default="out/00109_dynamic_chi_error_parity_plus_gf.h5py",
+                        type=str, help="initial pulse filepath")
     parser_args = parser.parse_args()
     if parser_args.idx == -1:
         filename = generate_file_path("h5py", f"dynamic_chi_{parser_args.gate}", "out")
@@ -135,10 +138,11 @@ if __name__ == "__main__":
     elif parser_args.gate == "error_parity_plus_gf":
         initial_states = [tensor(basis(c_dim, c_idx), unit(basis(t_dim, 0) + basis(t_dim, 2)))
                           for c_idx in range(2)]
-        final_states = [tensor(basis(c_dim, c_idx), unit(basis(t_dim, 0) + (-1) ** (c_idx % 2) * basis(t_dim, 2)))
-                        for c_idx in range(2)]
+        final_states = [tensor(basis(c_dim, 0), unit(basis(t_dim, 0) + basis(t_dim, 2))),
+                        1j * tensor(basis(c_dim, 1), unit(basis(t_dim, 0) - basis(t_dim, 2)))]
         final_states_traj = [
-            (-1)**(c_idx % 2) * tensor(basis(c_dim, c_idx), basis(t_dim, 1)) for c_idx in range(2)
+            tensor(basis(c_dim, 0), basis(t_dim, 1)),
+            -1j * tensor(basis(c_dim, 1), basis(t_dim, 1))
         ]
     else:
         raise RuntimeError("gate type not supported")
@@ -196,9 +200,15 @@ if __name__ == "__main__":
         plt.show()
 
     rng = np.random.default_rng(parser_args.rng_seed)
-    init_drive_params = 2.0 * jnp.pi * (-2.0 * parser_args.scale * rng.random((len(H1), ntimes)) + parser_args.scale)
 
-    def _drive_spline(drive_params):
+    if parser_args.initial_pulse_filepath is not None:
+        data, params = extract_info_from_h5(parser_args.initial_pulse_filepath)
+        init_drive_params = data["opt_params"][-1]
+    else:
+        init_drive_params = 2.0 * jnp.pi * (-2.0 * parser_args.scale * rng.random((len(H1), ntimes)) + parser_args.scale)
+
+
+    def _drive_spline(drive_params, envelope, ts):
         # note swap of axes so that time axis is first
         drive_w_envelope = jnp.einsum("t,dt->td", envelope, drive_params)
         total_drive = jnp.clip(
@@ -206,12 +216,12 @@ if __name__ == "__main__":
             a_min=-max_amp[None, :],
             a_max=max_amp[None, :],
         )
-        drive_coeffs = dx.backward_hermite_coefficients(tsave, total_drive)
-        drive_spline = dx.CubicInterpolation(tsave, drive_coeffs)
+        drive_coeffs = dx.backward_hermite_coefficients(ts, total_drive)
+        drive_spline = dx.CubicInterpolation(ts, drive_coeffs)
         return drive_spline
 
-    def H_func(t, drive_params):
-        drive_spline = _drive_spline(drive_params)
+    def H_func(t, drive_params, envelope, ts):
+        drive_spline = _drive_spline(drive_params, envelope, ts)
         drive_amps = drive_spline.evaluate(t)
         drive_Hs = jnp.einsum("d,dij->ij", drive_amps, H1)
         H = H0 + drive_Hs
@@ -221,6 +231,21 @@ if __name__ == "__main__":
                 "sb,sjk->bjk", 2.0 * jnp.pi * noise_spline.evaluate(t), jnp.asarray([g_proj, e_proj, f_proj])
             )
             H = H[None, :, :] + H_freq_shift
+        return H
+
+    def H_func_single(t, drive_params, envelope, ts, noise_idx):
+        drive_spline = _drive_spline(drive_params, envelope, ts)
+        drive_amps = drive_spline.evaluate(t)
+        drive_Hs = jnp.einsum("d,dij->ij", drive_amps, H1)
+        H = H0 + drive_Hs
+        if parser_args.include_low_frequency_noise:
+            # extra factor of 2 is because Aniket defines it as 2 pi sigmaz
+            H_freq_shift = jnp.einsum(
+                "s,sjk->jk",
+                2.0 * jnp.pi * noise_spline.evaluate(t)[:, noise_idx],
+                jnp.asarray([g_proj, e_proj, f_proj])
+            )
+            H += H_freq_shift
         return H
 
 
@@ -237,15 +262,61 @@ if __name__ == "__main__":
         # zero_drive,
         # zero_drive,
     ))
-    H_func_fixed_chi = partial(H_func, drive_params=drive_params_fixed_chi)
-    H_fixed_chi = timecallable(H_func_fixed_chi, )
 
-    result_fixed_chi = sesolve(H_fixed_chi, initial_states, tsave, options=options)
-    infid = infidelity_incoherent(result_fixed_chi.final_state, jnp.asarray(final_states))
-    print(f"fidelity for the fixed chi pulse is {1-np.average(infid)}")
+    def run_noisy(noise_idx, initial_states, drive_params, envelope, ts):
+        H_func_chi = partial(
+            H_func_single,
+            drive_params=drive_params,
+            envelope=envelope,
+            ts=ts,
+            noise_idx=noise_idx,
+        )
+        H_chi = timecallable(H_func_chi, )
+        return sesolve(H_chi, initial_states, ts, options=options).final_state
+
+    f_pos = jax.vmap(partial(
+        run_noisy,
+        initial_states=initial_states,
+        drive_params=drive_params_fixed_chi[:, : ntimes//2],
+        envelope=envelope[:ntimes // 2],
+        ts=tsave[:ntimes//2],
+    ), in_axes=0)
+    result_first_half_noisy = f_pos(jnp.arange(parser_args.num_freq_shift_trajs))
+
+    # fixed chi
+
+    f_pos_second = jax.vmap(partial(
+        run_noisy,
+        drive_params=drive_params_fixed_chi[:, ntimes // 2:],
+        envelope=envelope[ntimes // 2:],
+        ts=tsave[ntimes // 2:],
+    ), in_axes=(0, 0))
+    result_second_half_fixed = f_pos_second(
+        jnp.arange(parser_args.num_freq_shift_trajs), result_first_half_noisy
+    )
+
+    # echoed
+
+    Rx = jnp.expm1(-1j * 0.5 * np.pi * (gf_proj + dag(gf_proj)))
+
+    states_after_pi = jnp.einsum("ij,...jk->...ik", Rx, result_first_half_noisy)
+    f_neg = jax.vmap(partial(
+        run_noisy,
+        drive_params=-1*drive_params_fixed_chi[:, ntimes // 2:],
+        envelope=envelope[ntimes // 2:],
+        ts=tsave[ntimes // 2:],
+    ), in_axes=(0, 0))
+    result_second_half_echoed = f_neg(
+        jnp.arange(parser_args.num_freq_shift_trajs), states_after_pi
+    )
+
+    infid_fixed_chi = infidelity_incoherent(result_second_half_fixed, jnp.asarray(final_states))
+    infid_echoed_chi = infidelity_incoherent(result_second_half_echoed, jnp.asarray(final_states))
+    print(f"fidelity for the fixed chi pulse is {1-np.average(infid_fixed_chi)}")
+    print(f"fidelity for the echoed chi pulse is {1 - np.average(infid_echoed_chi)}")
     #####
 
-    H_tc = jax.tree_util.Partial(H_func)
+    H_tc = jax.tree_util.Partial(H_func, envelope=envelope, ts=tsave)
 
     opt_params = grape(
         H_tc,
@@ -265,8 +336,8 @@ if __name__ == "__main__":
     if parser_args.plot:
 
         finer_times = jnp.linspace(0.0, parser_args.time, 201)
-        drive_spline = _drive_spline(opt_params)
-        init_drive_spline = _drive_spline(init_drive_params)
+        drive_spline = _drive_spline(opt_params, envelope, tsave)
+        init_drive_spline = _drive_spline(init_drive_params, envelope, tsave)
         drive_amps = jnp.asarray([drive_spline.evaluate(t) for t in finer_times]).swapaxes(0, 1)
         init_drive_amps = jnp.asarray([init_drive_spline.evaluate(t) for t in finer_times]).swapaxes(0, 1)
 
@@ -290,7 +361,7 @@ if __name__ == "__main__":
             return ket @ dag(ket)
 
 
-        H_func = partial(H_func, drive_params=opt_params)
+        H_func = partial(H_func, drive_params=opt_params, envelope=envelope, ts=tsave)
         H_tc = timecallable(H_func, )
         if parser_args.gate == "error_parity_plus_gf":
             e_idx = 2
