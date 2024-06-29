@@ -46,7 +46,7 @@ def mcsolve(
     root_finder: AbstractRootFinder = optx.Newton(1e-5, 1e-5, optx.rms_norm),
     gradient: Gradient | None = None,
     options: Options = Options(),  # noqa: B008
-) -> Result:
+) -> MCResult:
     r"""Perform Monte-Carlo evolution, unraveling the master equation.
 
     We follow the algorithm outlined in Abdelhafez et al. to efficiently perform
