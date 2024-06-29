@@ -9,6 +9,7 @@ from .time_array import *
 from .utils import *
 from .mcsolve import *
 from .grape import *
+from .code_optimizer import *
 
 # get version from pyproject.toml
 __version__ = version(__package__)
