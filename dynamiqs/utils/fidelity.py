@@ -5,7 +5,8 @@ import jax.numpy as jnp
 __all__ = [
     'infidelity_coherent',
     'infidelity_incoherent',
-    'all_X_Y_Z_states'
+    'forbidden_population',
+    'all_X_Y_Z_states',
 ]
 
 from dynamiqs import isket, isbra, toket, unit
@@ -41,10 +42,21 @@ def infidelity_incoherent(computed_states, target_states):
     return 1 - fids
 
 
+def forbidden_population(computed_states, forbidden_states):
+    forbidden_ovlp = jnp.einsum(
+        "...sid,sbid->...b",
+        computed_states[..., 0: len(forbidden_states), :, :],
+        forbidden_states
+    )
+    # average over everything
+    return jnp.mean(jnp.abs(forbidden_ovlp * jnp.conj(forbidden_ovlp)))
+
+
 def all_X_Y_Z_states(basis_states):
     all_states = []
+    for idx, state in enumerate(basis_states):
+        all_states.append(state)
     for idx_1, state_1 in enumerate(basis_states):
-        all_states.append(state_1)
         for idx_2, state_2 in enumerate(basis_states):
             if idx_2 > idx_1:
                 all_states.append(unit(state_1 + state_2))

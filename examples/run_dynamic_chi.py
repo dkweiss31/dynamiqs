@@ -25,7 +25,7 @@ color_ls_alpha_cycler = alpha_cycler * lw_cycler * ls_cycler * color_cycler
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="dynamic chi sim")
     parser.add_argument("--idx", default=-1, type=int, help="idx to scan over")
-    parser.add_argument("--gate", default="error_parity_plus_gf", type=str,
+    parser.add_argument("--gate", default="error_parity_plus", type=str,
                         help="type of gate. Can be error_parity_g, error_parity_plus, ...")
     parser.add_argument("--grape_type", default="unitary", type=str, help="can be unitary or jumps")
     parser.add_argument("--c_dim", default=4, type=int, help="cavity hilbert dim cutoff")
@@ -131,10 +131,14 @@ if __name__ == "__main__":
     elif parser_args.gate == "error_parity_plus":
         initial_states = [tensor(basis(c_dim, c_idx), unit(basis(t_dim, 0) + basis(t_dim, 1)))
                           for c_idx in range(2)]
-        final_states = [tensor(basis(c_dim, c_idx),
-                               unit(basis(t_dim, 0) + (-1) ** (c_idx % 2) * basis(t_dim, 1)))
-                        for c_idx in range(2)]
+        final_states = [tensor(basis(c_dim, 0), unit(basis(t_dim, 0) + basis(t_dim, 1))),
+                        1j * tensor(basis(c_dim, 1), unit(basis(t_dim, 0) - basis(t_dim, 1)))]
         final_states_traj = None
+        forbidden_states = [
+            [tensor(basis(c_dim, c_idx), basis(t_dim, t_idx))
+             for c_idx in range(c_dim) for t_idx in range(t_dim) if c_idx != c_init_idx]
+            for c_init_idx in (0, 1)
+        ]
     elif parser_args.gate == "error_parity_plus_gf":
         initial_states = [tensor(basis(c_dim, c_idx), unit(basis(t_dim, 0) + basis(t_dim, 2)))
                           for c_idx in range(2)]
@@ -143,6 +147,11 @@ if __name__ == "__main__":
         final_states_traj = [
             tensor(basis(c_dim, 0), basis(t_dim, 1)),
             -1j * tensor(basis(c_dim, 1), basis(t_dim, 1))
+        ]
+        forbidden_states = [
+            [tensor(basis(c_dim, c_idx), basis(t_dim, t_idx))
+             for c_idx in range(c_dim) for t_idx in range(t_dim) if c_idx != c_init_idx]
+            for c_init_idx in (0, 1)
         ]
     else:
         raise RuntimeError("gate type not supported")
@@ -250,70 +259,70 @@ if __name__ == "__main__":
 
 
     #####
-    zero_drive = jnp.zeros(ntimes)
-    fixed_chi = (np.pi / (tsave[-1])) * jnp.ones(ntimes)
-    drive_params_fixed_chi = jnp.vstack((
-        # zero_drive,
-        fixed_chi,
-        zero_drive,
-        zero_drive,
-        # zero_drive,
-        # zero_drive,
-        # zero_drive,
-        # zero_drive,
-    ))
-
-    def run_noisy(noise_idx, initial_states, drive_params, envelope, ts):
-        H_func_chi = partial(
-            H_func_single,
-            drive_params=drive_params,
-            envelope=envelope,
-            ts=ts,
-            noise_idx=noise_idx,
-        )
-        H_chi = timecallable(H_func_chi, )
-        return sesolve(H_chi, initial_states, ts, options=options).final_state
-
-    f_pos = jax.vmap(partial(
-        run_noisy,
-        initial_states=initial_states,
-        drive_params=drive_params_fixed_chi[:, : ntimes//2],
-        envelope=envelope[:ntimes // 2],
-        ts=tsave[:ntimes//2],
-    ), in_axes=0)
-    result_first_half_noisy = f_pos(jnp.arange(parser_args.num_freq_shift_trajs))
-
-    # fixed chi
-
-    f_pos_second = jax.vmap(partial(
-        run_noisy,
-        drive_params=drive_params_fixed_chi[:, ntimes // 2:],
-        envelope=envelope[ntimes // 2:],
-        ts=tsave[ntimes // 2:],
-    ), in_axes=(0, 0))
-    result_second_half_fixed = f_pos_second(
-        jnp.arange(parser_args.num_freq_shift_trajs), result_first_half_noisy
-    )
-
-    # echoed
-
-    Rx = jnp.expm1(-1j * 0.5 * np.pi * (gf_proj + dag(gf_proj)))
-
-    states_after_pi = jnp.einsum("ij,...jk->...ik", Rx, result_first_half_noisy)
-    f_neg = jax.vmap(partial(
-        run_noisy,
-        drive_params=-1*drive_params_fixed_chi[:, ntimes // 2:],
-        envelope=envelope[ntimes // 2:],
-        ts=tsave[ntimes // 2:],
-    ), in_axes=(0, 0))
-    result_second_half_echoed = f_neg(
-        jnp.arange(parser_args.num_freq_shift_trajs), states_after_pi
-    )
-
-    infid_fixed_chi = infidelity_incoherent(result_second_half_fixed, jnp.asarray(final_states))
-    infid_echoed_chi = infidelity_incoherent(result_second_half_echoed, jnp.asarray(final_states))
-    print(f"fidelity for the fixed chi pulse is {1-np.average(infid_fixed_chi)}")
-    print(f"fidelity for the echoed chi pulse is {1 - np.average(infid_echoed_chi)}")
+    # zero_drive = jnp.zeros(ntimes)
+    # fixed_chi = (np.pi / (tsave[-1])) * jnp.ones(ntimes)
+    # drive_params_fixed_chi = jnp.vstack((
+    #     # zero_drive,
+    #     fixed_chi,
+    #     zero_drive,
+    #     zero_drive,
+    #     # zero_drive,
+    #     # zero_drive,
+    #     # zero_drive,
+    #     # zero_drive,
+    # ))
+    #
+    # def run_noisy(noise_idx, initial_states, drive_params, envelope, ts):
+    #     H_func_chi = partial(
+    #         H_func_single,
+    #         drive_params=drive_params,
+    #         envelope=envelope,
+    #         ts=ts,
+    #         noise_idx=noise_idx,
+    #     )
+    #     H_chi = timecallable(H_func_chi, )
+    #     return sesolve(H_chi, initial_states, ts, options=options).final_state
+    #
+    # f_pos = jax.vmap(partial(
+    #     run_noisy,
+    #     initial_states=initial_states,
+    #     drive_params=drive_params_fixed_chi[:, : ntimes//2],
+    #     envelope=envelope[:ntimes // 2],
+    #     ts=tsave[:ntimes//2],
+    # ), in_axes=0)
+    # result_first_half_noisy = f_pos(jnp.arange(parser_args.num_freq_shift_trajs))
+    #
+    # # fixed chi
+    #
+    # f_pos_second = jax.vmap(partial(
+    #     run_noisy,
+    #     drive_params=drive_params_fixed_chi[:, ntimes // 2:],
+    #     envelope=envelope[ntimes // 2:],
+    #     ts=tsave[ntimes // 2:],
+    # ), in_axes=(0, 0))
+    # result_second_half_fixed = f_pos_second(
+    #     jnp.arange(parser_args.num_freq_shift_trajs), result_first_half_noisy
+    # )
+    #
+    # # echoed
+    #
+    # Rx = jnp.expm1(-1j * 0.5 * np.pi * (gf_proj + dag(gf_proj)))
+    #
+    # states_after_pi = jnp.einsum("ij,...jk->...ik", Rx, result_first_half_noisy)
+    # f_neg = jax.vmap(partial(
+    #     run_noisy,
+    #     drive_params=-1*drive_params_fixed_chi[:, ntimes // 2:],
+    #     envelope=envelope[ntimes // 2:],
+    #     ts=tsave[ntimes // 2:],
+    # ), in_axes=(0, 0))
+    # result_second_half_echoed = f_neg(
+    #     jnp.arange(parser_args.num_freq_shift_trajs), states_after_pi
+    # )
+    #
+    # infid_fixed_chi = infidelity_incoherent(result_second_half_fixed, jnp.asarray(final_states))
+    # infid_echoed_chi = infidelity_incoherent(result_second_half_echoed, jnp.asarray(final_states))
+    # print(f"fidelity for the fixed chi pulse is {1-np.average(infid_fixed_chi)}")
+    # print(f"fidelity for the echoed chi pulse is {1 - np.average(infid_echoed_chi)}")
     #####
 
     H_tc = jax.tree_util.Partial(H_func, envelope=envelope, ts=tsave)
@@ -327,6 +336,7 @@ if __name__ == "__main__":
         grape_type=parser_args.grape_type,
         jump_ops=jump_ops,
         target_states_traj=final_states_traj,
+        forbidden_states=forbidden_states,
         filepath=filename,
         optimizer=optimizer,
         options=options,
@@ -344,7 +354,7 @@ if __name__ == "__main__":
         fig, ax = plt.subplots()
         for drive_idx in range(len(H1)):
             plt.plot(finer_times, drive_amps[drive_idx]/(2.0*np.pi), label=f"I_{drive_idx}")
-            # plt.plot(finer_times, init_drive_amps[drive_idx]/(2.0*np.pi), label=f"I_{drive_idx}_init")
+            plt.plot(finer_times, init_drive_amps[drive_idx]/(2.0*np.pi), label=f"I_{drive_idx}_init")
         plt.plot(finer_times, (np.pi / (2.0 * np.pi * tsave[-1])) * jnp.ones_like(finer_times),
                  ls="--", color="black", label="chi")
         plt.plot(finer_times, (-np.pi / (2.0 * np.pi * tsave[-1])) * jnp.ones_like(finer_times),
