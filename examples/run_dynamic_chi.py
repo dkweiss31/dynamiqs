@@ -25,9 +25,9 @@ color_ls_alpha_cycler = alpha_cycler * lw_cycler * ls_cycler * color_cycler
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="dynamic chi sim")
     parser.add_argument("--idx", default=-1, type=int, help="idx to scan over")
-    parser.add_argument("--gate", default="error_parity_plus", type=str,
+    parser.add_argument("--gate", default="error_parity_plus_gf", type=str,
                         help="type of gate. Can be error_parity_g, error_parity_plus, ...")
-    parser.add_argument("--grape_type", default="unitary", type=str, help="can be unitary or jumps")
+    parser.add_argument("--grape_type", default="jumps", type=str, help="can be unitary or jumps")
     parser.add_argument("--c_dim", default=4, type=int, help="cavity hilbert dim cutoff")
     parser.add_argument("--t_dim", default=3, type=int, help="tmon hilbert dim cutoff")
     parser.add_argument("--Kerr", default=0.200, type=float, help="transmon Kerr in GHz")
@@ -50,7 +50,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", default=2000, type=int, help="number of epochs")
     parser.add_argument("--target_fidelity", default=0.99, type=float, help="target fidelity")
     parser.add_argument("--rng_seed", default=430, type=int, help="rng seed for random initial pulses")  # 87336259
-    parser.add_argument("--include_low_frequency_noise", default=1, type=int,
+    parser.add_argument("--include_low_frequency_noise", default=0, type=int,
                         help="whether to batch over different realizations of low-frequency noise")
     parser.add_argument("--num_freq_shift_trajs", default=11, type=int,
                         help="number of trajectories to sample low-frequency noise for")
@@ -64,7 +64,7 @@ if __name__ == "__main__":
     parser.add_argument("--ntraj", default=10, type=int, help="number of jump trajectories")
     parser.add_argument("--plot", default=True, type=bool, help="plot the results?")
     parser.add_argument("--initial_pulse_filepath",
-                        default="out/00104_dynamic_chi_error_parity_plus.h5py",
+                        default=None,#"out/00104_dynamic_chi_error_parity_plus.h5py",
                         type=str, help="initial pulse filepath")
     parser_args = parser.parse_args()
     if parser_args.idx == -1:
@@ -147,6 +147,7 @@ if __name__ == "__main__":
              for c_idx in range(c_dim) for t_idx in range(t_dim) if c_idx != c_init_idx]
             for c_init_idx in (0, 1)
         ]
+        forbidden_states = None
     elif parser_args.gate == "error_parity_plus_gf":
         initial_states = [tensor(basis(c_dim, c_idx), unit(basis(t_dim, 0) + basis(t_dim, 2)))
                           for c_idx in range(2)]
@@ -161,6 +162,7 @@ if __name__ == "__main__":
              for c_idx in range(c_dim) for t_idx in range(t_dim) if c_idx != c_init_idx]
             for c_init_idx in (0, 1)
         ]
+        forbidden_states = None
     else:
         raise RuntimeError("gate type not supported")
 
