@@ -13,10 +13,6 @@ from dynamiqs import isket, isbra, toket, unit
 
 
 def _overlaps(computed_states, target_states):
-    if isbra(computed_states):
-        computed_states = toket(computed_states)
-    if isbra(target_states):
-        target_states = toket(target_states)
     # s: batch over initial states, i: hilbert dim, d: size 1
     return jnp.einsum(
         "...sid,...sid->...s", jnp.conj(target_states), computed_states
