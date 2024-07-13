@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 from jaxtyping import ArrayLike
+from jax.random import PRNGKey
 
 import dynamiqs as dq
 from dynamiqs import Options
@@ -36,6 +37,7 @@ def grape(
     solver: Solver = Tsit5(),
     options: Options = Options(),
     init_params_to_save: dict = {},
+    rng_seed: int = 42,
 ) -> ArrayLike:
     r"""Perform gradient descent to optimize Hamiltonian parameters
 
@@ -104,6 +106,7 @@ def grape(
                 options,
                 optimizer,
                 grape_type,
+                rng_seed,
             )
             data_dict = {"infidelities": infids}
             save_and_print(
@@ -149,7 +152,7 @@ def save_and_print(
         write_to_h5_multi(filepath, data_dict, init_param_dict)
 
 
-@partial(jax.jit, static_argnames=("solver", "options", "optimizer", "grape_type"))
+@partial(jax.jit, static_argnames=("solver", "options", "optimizer", "grape_type", "rng_seed"))
 def step(
     params_to_optimize,
     opt_state,
@@ -163,6 +166,7 @@ def step(
     options,
     optimizer,
     grape_type,
+    rng_seed,
 ):
     """calculate gradient of the loss and step updated parameters.
     We have has_aux=True because loss also returns the infidelities on the side
@@ -178,6 +182,7 @@ def step(
         solver,
         options,
         grape_type,
+        rng_seed,
     )
     updates, opt_state = optimizer.update(grads, opt_state)
     params_to_optimize = optax.apply_updates(params_to_optimize, updates)
@@ -195,6 +200,7 @@ def loss(
     solver,
     options,
     grape_type,
+    rng_seed,
 ):
     """either calls sesolve or mcsolve or both depending on the type of simulation requested"""
     if options.coherent:
@@ -226,6 +232,7 @@ def loss(
             jump_no_jump_weights,
             solver,
             options,
+            rng_seed,
             infid_func,
         )
     else:
@@ -265,11 +272,14 @@ def _traj_infids(
     jump_no_jump_weights,
     solver,
     options,
+    rng_seed,
     infid_func,
 ):
     H_func = partial(H_func, drive_params=params_to_optimize)
     H = timecallable(H_func, )
-    mcsolve_results = dq.mcsolve(H, jump_ops, initial_states, tsave, solver=solver, options=options)
+    mcsolve_results = dq.mcsolve(
+        H, jump_ops, initial_states, tsave, key=PRNGKey(rng_seed), solver=solver, options=options
+    )
     final_jump_states = dq.unit(mcsolve_results.final_jump_states).swapaxes(-4, -3)
     final_no_jump_states = dq.unit(mcsolve_results.final_no_jump_state)
     infids_jump = infid_func(
