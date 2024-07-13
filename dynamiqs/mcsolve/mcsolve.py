@@ -141,7 +141,7 @@ def _vectorized_mcsolve(
     # we vectorize over H, jump_ops and psi0, all other arguments are not vectorized
     # below we will have another layer of vectorization over ntraj
 
-    out_axes = MCResult(None, 0, 0, 0, 0)
+    out_axes = MCResult(False, 0, 0, 0, 0, 0, 0)
 
     if not options.cartesian_batching:
         broadcast_shape = jnp.broadcast_shapes(
@@ -215,7 +215,7 @@ def _mcsolve(
             loop_over_jumps,
             in_axes=(None, None, None, None, 0, 0, None, None, None, None, None),
         )
-    jump_results = f(
+    jump_results, jump_times, num_jumps = f(
         H,
         jump_ops,
         psi0,
@@ -234,7 +234,7 @@ def _mcsolve(
         avg_expects = p_nojump * no_jump_expects + (1 - p_nojump) * jump_expects
     else:
         avg_expects = None
-    mcresult = MCResult(tsave, no_jump_result, jump_results, p_nojump, avg_expects)
+    mcresult = MCResult(tsave, no_jump_result, jump_results, p_nojump, jump_times, num_jumps, avg_expects)
     return mcresult
 
 
@@ -280,20 +280,20 @@ def one_jump_only(
     options: Options,
 ):
     key_1, key_2 = jax.random.split(key)
-    before_jump_result = _jump_trajs(
+    before_jump_result, t_jump = _jump_trajs(
         H, jump_ops, psi0, tsave, key_1, rand, exp_ops, solver, root_finder, gradient, options
     )
     new_t0 = before_jump_result.final_time
     new_psi0 = before_jump_result.final_state
     new_tsave = jnp.linspace(new_t0, tsave[-1], len(tsave))
     # don't allow another jump
-    after_jump_result = _jump_trajs(
+    after_jump_result, _ = _jump_trajs(
         H, jump_ops, new_psi0, new_tsave, key_2, 0.0, exp_ops, solver, root_finder, gradient, options
     )
     result = interpolate_states_and_expects(
         tsave, new_tsave, before_jump_result, after_jump_result, new_t0, options
     )
-    return result
+    return result, t_jump, 1
 
 
 def loop_over_jumps(
@@ -311,11 +311,11 @@ def loop_over_jumps(
 ):
     """loop over jumps until the simulation reaches the final time"""
     def while_cond(t_state_key_solver):
-        prev_result, prev_key = t_state_key_solver
+        prev_result, prev_t_jump, prev_num_jumps, prev_key = t_state_key_solver
         return prev_result.final_time < tsave[-1]
 
     def while_body(t_state_key_solver):
-        prev_result, prev_key = t_state_key_solver
+        prev_result, prev_t_jump, prev_num_jumps, prev_key = t_state_key_solver
         jump_key, next_key, loop_key = jax.random.split(prev_key, num=3)
         new_rand = jax.random.uniform(jump_key)
         new_t0 = prev_result.final_time
@@ -323,7 +323,7 @@ def loop_over_jumps(
         # tsave_after_jump has spacings not consistent with tsave, but
         # we will interpolate later
         new_tsave = jnp.linspace(new_t0, tsave[-1], len(tsave))
-        next_result = _jump_trajs(
+        next_result, next_t_jump = _jump_trajs(
             H,
             jump_ops,
             new_psi0,
@@ -339,22 +339,25 @@ def loop_over_jumps(
         result = interpolate_states_and_expects(
             tsave, new_tsave, prev_result, next_result, new_t0, options
         )
-        return result, loop_key
+        t_jump = jnp.where(
+            next_result.final_time < tsave[-1], next_t_jump, prev_t_jump
+        )
+        return result, t_jump, prev_num_jumps + 1, loop_key
 
     # solve until the first jump occurs. Enter the while loop for additional jumps
     key_1, key_2 = jax.random.split(key)
-    initial_result = _jump_trajs(
+    initial_result, first_t_jump = _jump_trajs(
         H, jump_ops, psi0, tsave, key_1, rand, exp_ops, solver, root_finder, gradient, options
     )
 
-    final_result, _ = while_loop(
+    final_result, last_t_jump, total_num_jumps, _ = while_loop(
         while_cond,
         while_body,
-        (initial_result, key_2),
-        max_steps=100,
+        (initial_result, first_t_jump, 0, key_2),
+        max_steps=100_000_000,
         kind="bounded",
     )
-    return final_result
+    return final_result, last_t_jump, total_num_jumps
 
 
 def _jump_trajs(
@@ -387,7 +390,7 @@ def _jump_trajs(
     )
     # save this state as the new final state
     result = eqx.tree_at(lambda res: res._saved.ylast, res_before_jump, psi)
-    return result
+    return result, t_jump
 
 
 def interpolate_states_and_expects(
@@ -479,24 +482,24 @@ def _check_mcsolve_args(
     exp_ops: Array | None,
 ):
     # === check H shape
-    check_shape(H, 'H', '(?, n, n)', subs={'?': 'nH?'})
+    check_shape(H, 'H', '(..., n, n)', subs={'...': '...H'})
 
     # === check jump_ops shape
+    for i, L in enumerate(jump_ops):
+        check_shape(L, f'jump_ops[{i}]', '(..., n, n)', subs={'...': f'...L{i}'})
+
     if len(jump_ops) == 0:
         logging.warning(
             'Argument `jump_ops` is an empty list, consider using `dq.sesolve()` to'
             ' solve the Schrödinger equation.'
         )
 
-    for i, L in enumerate(jump_ops):
-        check_shape(L, f'jump_ops[{i}]', '(?, n, n)', subs={'?': 'nL?'})
-
-    # === check rho0 shape
-    check_shape(psi0, 'rho0', '(?, n, 1)', subs={'?': 'npsi0?'})
+    # === check psi0 shape
+    check_shape(psi0, 'psi0', '(..., n, 1)', subs={'...': '...psi0'})
 
     # === check tsave shape
     check_times(tsave, 'tsave')
 
     # === check exp_ops shape
     if exp_ops is not None:
-        check_shape(exp_ops, 'exp_ops', '(N, n, n)', subs={'N': 'nE'})
+        check_shape(exp_ops, 'exp_ops', '(N, n, n)', subs={'N': 'len(exp_ops)'})

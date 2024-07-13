@@ -10,9 +10,14 @@ from jaxtyping import PyTree
 
 from ..gradient import Autograd, CheckpointAutograd
 from .abstract_solver import BaseSolver
+from diffrax._progress_meter import NoProgressMeter
 
 
 class DiffraxSolver(BaseSolver):
+    # Subclasses should implement:
+    # - the attributes: stepsize_controller, dt0, max_steps, diffrax_solver, terms
+    # - the methods: result, infos
+
     stepsize_controller: dx.AbstractVar[dx.AbstractStepSizeController]
     dt0: dx.AbstractVar[float | None]
     max_steps: dx.AbstractVar[int]
@@ -25,9 +30,12 @@ class DiffraxSolver(BaseSolver):
         super().__init__(*args)
 
     def run(self) -> PyTree:
-        # TODO: remove once complex support is stabilized in diffrax
         with warnings.catch_warnings():
+            # TODO: remove once complex support is stabilized in diffrax
             warnings.simplefilter('ignore', UserWarning)
+            # TODO: remove once https://github.com/patrick-kidger/diffrax/issues/445 is
+            # closed
+            warnings.simplefilter('ignore', FutureWarning)
 
             # === prepare diffrax arguments
             fn = lambda t, y, args: self.save(y)  # noqa: ARG005
@@ -42,6 +50,11 @@ class DiffraxSolver(BaseSolver):
             elif isinstance(self.gradient, Autograd):
                 adjoint = dx.DirectAdjoint()
 
+            if self.event is None:
+                progress_meter = self.options.progress_meter.to_diffrax()
+            else:
+                progress_meter = NoProgressMeter()
+
             # === solve differential equation with diffrax
             solution = dx.diffeqsolve(
                 self.terms,
@@ -55,6 +68,7 @@ class DiffraxSolver(BaseSolver):
                 adjoint=adjoint,
                 event=self.event,
                 max_steps=self.max_steps,
+                progress_meter=progress_meter,
             )
 
         # === collect and return results
@@ -68,6 +82,10 @@ class DiffraxSolver(BaseSolver):
 
 
 class FixedSolver(DiffraxSolver):
+    # Subclasses should implement:
+    # - the attributes: diffrax_solver, terms
+    # - the methods: result
+
     class Infos(eqx.Module):
         nsteps: Array
 
@@ -95,6 +113,10 @@ class EulerSolver(FixedSolver):
 
 
 class AdaptiveSolver(DiffraxSolver):
+    # Subclasses should implement:
+    # - the attributes: diffrax_solver, terms
+    # - the methods: result
+
     class Infos(eqx.Module):
         nsteps: Array
         naccepted: Array
@@ -103,8 +125,8 @@ class AdaptiveSolver(DiffraxSolver):
         def __str__(self) -> str:
             if self.nsteps.ndim >= 1:
                 return (
-                    f'avg. {self.nsteps.mean()} steps ({self.naccepted.mean()}'
-                    f' accepted, {self.nrejected.mean()} rejected) | infos shape'
+                    f'avg. {self.nsteps.mean():.1f} steps ({self.naccepted.mean():.1f}'
+                    f' accepted, {self.nrejected.mean():.1f} rejected) | infos shape'
                     f' {self.nsteps.shape}'
                 )
             return (
@@ -122,6 +144,7 @@ class AdaptiveSolver(DiffraxSolver):
             safety=self.solver.safety_factor,
             factormin=self.solver.min_factor,
             factormax=self.solver.max_factor,
+            jump_ts=self.discontinuity_ts,
         )
 
     @property
@@ -144,3 +167,11 @@ class Dopri8Solver(AdaptiveSolver):
 
 class Tsit5Solver(AdaptiveSolver):
     diffrax_solver = dx.Tsit5()
+
+
+class Kvaerno3Solver(AdaptiveSolver):
+    diffrax_solver = dx.Kvaerno3()
+
+
+class Kvaerno5Solver(AdaptiveSolver):
+    diffrax_solver = dx.Kvaerno5()

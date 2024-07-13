@@ -113,6 +113,8 @@ class MCResult(eqx.Module):
     _no_jump_res: Result
     _jump_res: Result
     no_jump_prob: float
+    jump_times: Array
+    num_jumps: Array
     expects: Array | None
 
     @property
@@ -137,6 +139,8 @@ class MCResult(eqx.Module):
             'Jump result': str(self._jump_res),
             'No-jump states  ': array_str(self.no_jump_states),
             'Jump states  ': array_str(self.jump_states),
+            'Jump times  ': array_str(self.jump_times),
+            'Number of jumps in each trajectory  ': array_str(self.num_jumps),
             'Expects ': array_str(self.expects) if self.expects is not None else None,
         }
         parts = {k: v for k, v in parts.items() if v is not None}
@@ -156,7 +160,7 @@ class SEResult(Result):
         expects _(array of shape (nH?, npsi0?, nE, ntsave) or None)_: Saved expectation
             values, if specified by `exp_ops`.
         extra _(PyTree or None)_: Extra data saved with `save_extra()` if
-            specified in `options`.
+            specified in `options` (see [`dq.Options`][dynamiqs.Options]).
         infos _(PyTree or None)_: Solver-dependent information on the resolution.
         tsave _(array of shape (ntsave,))_: Times for which results were saved.
         solver _(Solver)_: Solver used.
@@ -211,7 +215,7 @@ class MEResult(Result):
         expects _(array of shape (nH?, nrho0?, nE, ntsave) or None)_: Saved expectation
             values, if specified by `exp_ops`.
         extra _(PyTree or None)_: Extra data saved with `save_extra()` if
-            specified in `options`.
+            specified in `options` (see [`dq.Options`][dynamiqs.Options]).
         infos _(PyTree or None)_: Solver-dependent information on the resolution.
         tsave _(array of shape (ntsave,))_: Times for which results were saved.
         solver _(Solver)_: Solver used.
