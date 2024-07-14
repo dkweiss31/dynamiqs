@@ -1,4 +1,5 @@
 import argparse
+from functools import partial
 
 import jax
 import jax.numpy as jnp
@@ -16,6 +17,7 @@ import diffrax as dx
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="GRAPE sim")
     parser.add_argument("--idx", default=-1, type=int, help="idx to scan over")
+    parser.add_argument("--grape_type", default="jumps", type=str, help="can be unitary or jumps")
     parser.add_argument("--dim", default=4, type=int, help="tmon hilbert dim cutoff")
     parser.add_argument("--Kerr", default=0.100, type=float, help="transmon Kerr in GHz")
     parser.add_argument("--max_amp", default=[0.1, 0.1], help="max drive amp in GHz")
@@ -30,6 +32,9 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", default=2000, type=int, help="number of epochs")
     parser.add_argument("--target_fidelity", default=0.9995, type=float, help="target fidelity")
     parser.add_argument("--rng_seed", default=854, type=int, help="rng seed for random initial pulses")  # 87336259
+    parser.add_argument("--T1", default=1000000, type=float, help="T1 of the transmon in ns. If not infinity, "
+                                                                "includes jumps")
+    parser.add_argument("--ntraj", default=11, type=int, help="number of jump trajectories")
     parser.add_argument("--plot", default=True, type=bool, help="plot the results?")
     parser_args = parser.parse_args()
     if parser_args.idx == -1:
@@ -51,11 +56,14 @@ if __name__ == "__main__":
         coherent = False
     else:
         coherent = True
+
     options = Options(
         save_states=False,
         target_fidelity=parser_args.target_fidelity,
         epochs=parser_args.epochs,
         coherent=coherent,
+        one_jump_only=True,
+        ntraj=parser_args.ntraj,
     )
     a = destroy(dim)
     H0 = -0.5 * parser_args.Kerr * 2.0 * jnp.pi * dag(a) @ dag(a) @ a @ a
@@ -70,11 +78,19 @@ if __name__ == "__main__":
 
     initial_states = [basis(dim, 0), basis(dim, 1)]
     final_states = [basis(dim, 1), basis(dim, 0)]
+    final_states_traj = [basis(dim, 0), basis(dim, 1)]
 
-    # need to form superpositions so that the phase information is correct
     if parser_args.coherent == 0:
+        # pass
         initial_states = all_X_Y_Z_states(initial_states)
         final_states = all_X_Y_Z_states(final_states)
+        if final_states_traj is not None:
+            final_states_traj = all_X_Y_Z_states(final_states_traj)
+
+    if parser_args.grape_type == "jumps":
+        jump_ops = [jnp.sqrt(1. / parser_args.T1) * a, ]
+    else:
+        jump_ops = None
 
     rng = np.random.default_rng(parser_args.rng_seed)
     init_drive_params = 2.0 * jnp.pi * (-2.0 * parser_args.scale * rng.random((len(H1), ntimes)) + parser_args.scale)
@@ -106,6 +122,9 @@ if __name__ == "__main__":
         target_states=final_states,
         tsave=tsave,
         params_to_optimize=init_drive_params,
+        grape_type=parser_args.grape_type,
+        jump_ops=jump_ops,
+        target_states_traj=final_states_traj,
         filepath=filename,
         optimizer=optimizer,
         options=options,
@@ -131,8 +150,7 @@ if __name__ == "__main__":
         plt.savefig(filename[:-5]+"_pulse.pdf")
         plt.show()
 
-
-        H_opt = H_tc = timecallable(H_func, args=(opt_params, 0))
+        H_tc = timecallable(partial(H_func, drive_params=opt_params), )
         result = sesolve(H_tc, initial_states, finer_times,
                          exp_ops=[basis(dim, idx) @ dag(basis(dim, idx)) for idx in range(dim)])
         init_labels = [r"$|0\rangle$", r"$|0\rangle+|1\rangle$", r"$|0\rangle+i|1\rangle$", r"$|1\rangle$"]

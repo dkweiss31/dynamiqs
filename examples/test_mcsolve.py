@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 
 
 omega = 2.0 * jnp.pi * 1.0
-amp = 2.0 * jnp.pi * 0.0
+amp = 2.0 * jnp.pi * 0.1
 
 
 def H_func(t):
@@ -19,8 +19,8 @@ exp_ops = [dq.basis(2, 0) @ dq.tobra(dq.basis(2, 0)), dq.basis(2, 1) @ dq.tobra(
 
 initial_states = [dq.basis(2, 1),]
 
-num_traj = 31
-options = dq.Options(ntraj=num_traj)
+num_traj = 301
+options = dq.Options(ntraj=num_traj, one_jump_only=False)
 result = dq.mcsolve(
     timecallable(H_func),
     jump_ops,
@@ -28,7 +28,7 @@ result = dq.mcsolve(
     tsave,
     key=PRNGKey(4242434),
     exp_ops=exp_ops,
-    solver=Tsit5(),
+    solver=Tsit5(max_steps=100_000),
     options=options
 )
 result_me = dq.mesolve(

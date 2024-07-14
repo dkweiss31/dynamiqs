@@ -1,4 +1,5 @@
 import argparse
+import warnings
 from functools import partial
 
 import jax
@@ -6,10 +7,11 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import optax
+from jax.random import PRNGKey
 
 from dynamiqs import Options, grape, timecallable, dag, tensor, basis, destroy, eye, unit, mcsolve
 from dynamiqs import generate_noise_trajectory
-from dynamiqs import sesolve
+from dynamiqs import sesolve, unit
 from dynamiqs.utils.fidelity import all_X_Y_Z_states, infidelity_incoherent
 from dynamiqs.utils.file_io import generate_file_path, extract_info_from_h5
 import diffrax as dx
@@ -27,45 +29,51 @@ if __name__ == "__main__":
     parser.add_argument("--idx", default=-1, type=int, help="idx to scan over")
     parser.add_argument("--gate", default="error_parity_plus_gf", type=str,
                         help="type of gate. Can be error_parity_g, error_parity_plus, ...")
+    parser.add_argument("--drive_type", default="chi_gef", type=str,
+                        help="type of drives. Can be chi_gf, chi_gef or gbs")
     parser.add_argument("--grape_type", default="jumps", type=str, help="can be unitary or jumps")
-    parser.add_argument("--c_dim", default=4, type=int, help="cavity hilbert dim cutoff")
+    parser.add_argument("--c_dim", default=3, type=int, help="cavity hilbert dim cutoff")
     parser.add_argument("--t_dim", default=3, type=int, help="tmon hilbert dim cutoff")
-    parser.add_argument("--Kerr", default=0.200, type=float, help="transmon Kerr in GHz")
-    parser.add_argument("--Delta", default=0.021, type=float,
-                        help="Delta of the driving frequency from resonance, relevant only for gbs sims")
+    parser.add_argument("--Kerr", default=0.100, type=float, help="transmon Kerr in GHz")
     parser.add_argument(
         "--max_amp",
-        # default=[0.001, 0.002, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05],
-        default=[0.003, 0.003, 0.05, 0.05],
+        default=[0.002, 0.002, 0.002, 0.05, 0.05,],
+        # default=[0.001, 0.05, 0.05],
         help="max drive amp in GHz"
     )
-    parser.add_argument("--dt", default=50.0, type=float, help="time step for controls")
+    parser.add_argument(
+        "--scale",
+        default=[0.0, 0.0, 1e-2, 1e-3, 1e-3,],
+        help="randomization scale for initial pulse")
+    parser.add_argument("--dt", default=20.0, type=float, help="time step for controls")
     parser.add_argument("--time", default=500.0, type=float, help="gate time")
     parser.add_argument("--ramp_nts", default=2, type=int, help="numper of points in ramps")
-    parser.add_argument("--scale", default=1e-3, type=float, help="randomization scale for initial pulse")
     parser.add_argument("--learning_rate", default=0.0001, type=float, help="learning rate for ADAM optimize")
     parser.add_argument("--b1", default=0.999, type=float, help="decay of learning rate first moment")
     parser.add_argument("--b2", default=0.999, type=float, help="decay of learning rate second moment")
-    parser.add_argument("--coherent", default=1, type=int, help="which fidelity metric to use")
+    parser.add_argument("--coherent", default=0, type=int, help="which fidelity metric to use")
     parser.add_argument("--epochs", default=2000, type=int, help="number of epochs")
-    parser.add_argument("--target_fidelity", default=0.99, type=float, help="target fidelity")
-    parser.add_argument("--rng_seed", default=430, type=int, help="rng seed for random initial pulses")  # 87336259
+    parser.add_argument("--target_fidelity", default=0.990, type=float, help="target fidelity")
+    parser.add_argument("--rng_seed", default=730, type=int, help="rng seed for random initial pulses")  # 87336259
     parser.add_argument("--include_low_frequency_noise", default=0, type=int,
                         help="whether to batch over different realizations of low-frequency noise")
-    parser.add_argument("--num_freq_shift_trajs", default=11, type=int,
+    parser.add_argument("--num_freq_shift_trajs", default=31, type=int,
                         help="number of trajectories to sample low-frequency noise for")
     parser.add_argument("--sample_rate", default=1.0, type=float, help="rate at which to sample noise (in us^-1)")
-    parser.add_argument("--relative_PSD_strength", default=1e-6, type=float,
+    parser.add_argument("--relative_PSD_strength", default=1e-5, type=float,
                         help="std-dev of frequency shifts given by sqrt(relative_PSD_strength * sample_rate)")
     parser.add_argument("--f0", default=1e-3, type=float, help="cutoff frequency for 1/f noise (in us^-1)")
     parser.add_argument("--white", default=0, type=int, help="white or 1/f noise")
     parser.add_argument("--T1", default=10000, type=float, help="T1 of the transmon in ns. If not infinity, "
                                                                  "includes jumps")
-    parser.add_argument("--ntraj", default=10, type=int, help="number of jump trajectories")
+    parser.add_argument("--ntraj", default=11, type=int, help="number of jump trajectories")
     parser.add_argument("--plot", default=True, type=bool, help="plot the results?")
     parser.add_argument("--initial_pulse_filepath",
                         default=None,#"out/00104_dynamic_chi_error_parity_plus.h5py",
                         type=str, help="initial pulse filepath")
+    parser.add_argument("--analysis_only", default=True, type=bool,
+                        help="whether to actually run the grape optimization or "
+                             "just analyze a pulse from initial_pulse_filepath")
     parser_args = parser.parse_args()
     if parser_args.idx == -1:
         filename = generate_file_path("h5py", f"dynamic_chi_{parser_args.gate}", "out")
@@ -73,6 +81,7 @@ if __name__ == "__main__":
         filename = f"out/{str(parser_args.idx).zfill(5)}_dynamic_chi_{parser_args.gate}.h5py"
     c_dim = parser_args.c_dim
     t_dim = parser_args.t_dim
+    scale = jnp.asarray(parser_args.scale)
 
     optimizer = optax.adam(learning_rate=parser_args.learning_rate, b1=parser_args.b1, b2=parser_args.b2)
     ntimes = int(parser_args.time // parser_args.dt) + 1
@@ -103,23 +112,32 @@ if __name__ == "__main__":
     gf_proj = tensor(eye(c_dim), basis(t_dim, 0) @ dag(basis(t_dim, 2)))
     ge_proj = tensor(eye(c_dim), basis(t_dim, 0) @ dag(basis(t_dim, 1)))
     ef_proj = tensor(eye(c_dim), basis(t_dim, 1) @ dag(basis(t_dim, 2)))
-    H0 = 2.0 * jnp.pi * parser_args.Delta * dag(a) @ a
-    H0 += 2.0 * jnp.pi * (-0.5 * parser_args.Kerr) * dag(b) @ dag(b) @ b @ b
-    H1 = [dag(a) @ b + dag(b) @ a, 1j * (dag(a) @ b - dag(b) @ a),
-          b + dag(b), 1j * (b - dag(b)),
-          ]
-    # H0 = -2.0 * jnp.pi * parser_args.Kerr * 0.5 * dag(b) @ dag(b) @ b @ b
-    # H0 = 0.0 * b  # usual choice for parity
-    # below usual choice for gf parity
-    # H1 = [dag(a) @ a @ f_proj, gf_proj + dag(gf_proj), 1j * (gf_proj - dag(gf_proj)), ]
-    # H1 = [dag(a) @ a @ e_proj, dag(a) @ a @ f_proj,
-    #       gf_proj + dag(gf_proj), 1j * (gf_proj - dag(gf_proj)),
-    #       ge_proj + dag(ge_proj), 1j * (ge_proj - dag(ge_proj)),
-    #       ef_proj + dag(ef_proj), 1j * (ef_proj - dag(ef_proj)),
-    #       ]
-    # H1 = [dag(a) @ a @ e_proj, dag(a) @ a @ f_proj, b + dag(b), 1j * (b - dag(b))]
-    # H1 = [dag(a) @ a @ dag(b) @ b, b + dag(b), 1j * (b - dag(b))]
-    # H1 = [dag(a) @ a @ dag(b) @ b, ]
+    if parser_args.drive_type == "chi_ge":
+        H0 = 0.0 * b
+        H1 = [dag(a) @ a @ f_proj, gf_proj + dag(gf_proj), 1j * (gf_proj - dag(gf_proj)), ]
+        H1_labels = [r"$\chi_f$", r"$I_{gf}$", r"$Q_{gf}$"]
+    elif parser_args.drive_type == "chi_gef":
+        H0 = 0.0 * b
+        H1 = [
+            dag(a) @ a @ g_proj,
+            dag(a) @ a @ e_proj,
+            dag(a) @ a @ f_proj,
+            gf_proj + dag(gf_proj), 1j * (gf_proj - dag(gf_proj)),
+            # ge_proj + dag(ge_proj), 1j * (ge_proj - dag(ge_proj)),
+            # ef_proj + dag(ef_proj), 1j * (ef_proj - dag(ef_proj)),
+        ]
+        H1_labels = [
+            r"$\chi_g$", r"$\chi_e$", r"$\chi_f$",
+            r"$I_{gf}$", r"$Q_{gf}$",
+            # r"$I_{ge}$", r"$Q_{ge}$",
+            # r"$I_{ef}$", r"$Q_{ef}$"
+        ]
+    elif parser_args.drive_type == "gbs":
+        pass
+    else:
+        raise ValueError(f"drive_type can be chi_ge, chi_gef,"
+                         f" gbs but got {parser_args.drive_type}")
+    assert len(H1) == len(H1_labels)
     if parser_args.grape_type == "jumps":
         jump_ops = [jnp.sqrt(1. / parser_args.T1) * b, ]
     else:
@@ -142,12 +160,6 @@ if __name__ == "__main__":
         final_states = [tensor(basis(c_dim, 0), unit(basis(t_dim, 0) + basis(t_dim, 1))),
                         1j * tensor(basis(c_dim, 1), unit(basis(t_dim, 0) - basis(t_dim, 1)))]
         final_states_traj = None
-        forbidden_states = [
-            [tensor(basis(c_dim, c_idx), basis(t_dim, t_idx))
-             for c_idx in range(c_dim) for t_idx in range(t_dim) if c_idx != c_init_idx]
-            for c_init_idx in (0, 1)
-        ]
-        forbidden_states = None
     elif parser_args.gate == "error_parity_plus_gf":
         initial_states = [tensor(basis(c_dim, c_idx), unit(basis(t_dim, 0) + basis(t_dim, 2)))
                           for c_idx in range(2)]
@@ -157,16 +169,11 @@ if __name__ == "__main__":
             tensor(basis(c_dim, 0), basis(t_dim, 1)),
             -1j * tensor(basis(c_dim, 1), basis(t_dim, 1))
         ]
-        forbidden_states = [
-            [tensor(basis(c_dim, c_idx), basis(t_dim, t_idx))
-             for c_idx in range(c_dim) for t_idx in range(t_dim) if c_idx != c_init_idx]
-            for c_init_idx in (0, 1)
-        ]
-        forbidden_states = None
     else:
         raise RuntimeError("gate type not supported")
 
     if parser_args.coherent == 0:
+        # pass
         initial_states = all_X_Y_Z_states(initial_states)
         final_states = all_X_Y_Z_states(final_states)
         if final_states_traj is not None:
@@ -212,7 +219,7 @@ if __name__ == "__main__":
         fig, ax = plt.subplots()
         for idx in range(parser_args.num_freq_shift_trajs):
             noise_amp = jnp.asarray([noise_spline.evaluate(t)[idx] for t in finer_times])
-            plt.plot(finer_times, 10**3 * noise_amp)
+            plt.plot(finer_times, 10 ** 3 * noise_amp)
         plt.xlabel("time [ns]")
         plt.ylabel("amplitude [MHz]")
         plt.tight_layout()
@@ -223,8 +230,37 @@ if __name__ == "__main__":
     if parser_args.initial_pulse_filepath is not None:
         data, params = extract_info_from_h5(parser_args.initial_pulse_filepath)
         init_drive_params = data["opt_params"][-1]
+        # warnings.warn("hack to set chi_e = chi_f and allow nonzero e drives!!")
+        # _init_drive_params = data["opt_params"][-1]
+        # init_chi_f = _init_drive_params[1]
+        # init_chi_e = _init_drive_params[1]
+        # _init_qubit_drives = jnp.einsum(
+        #     "h,ht->ht",
+        #     2.0 * jnp.pi * (-2.0) * scale,
+        #     rng.random((len(H1), ntimes))
+        # )
+        # _init_qubit_drives += 2.0 * jnp.pi * scale[:, None]
+        # init_drive_params = jnp.vstack(
+        #     (
+        #         _init_drive_params[1],
+        #         _init_drive_params[1],
+        #         _init_drive_params[2],
+        #         _init_drive_params[3],
+        #         _init_drive_params[4],
+        #         _init_drive_params[5],
+        #         _init_drive_params[6],
+        #         _init_drive_params[7],
+        #
+        #     )
+        # )
+
     else:
-        init_drive_params = 2.0 * jnp.pi * (-2.0 * parser_args.scale * rng.random((len(H1), ntimes)) + parser_args.scale)
+        init_drive_params = jnp.einsum(
+            "h,ht->ht",
+            2.0 * jnp.pi * (-2.0) * scale,
+            rng.random((len(H1), ntimes))
+        )
+        init_drive_params += 2.0 * jnp.pi * scale[:, None]
 
 
     def _drive_spline(drive_params, envelope, ts):
@@ -269,89 +305,93 @@ if __name__ == "__main__":
 
 
     #####
-    # zero_drive = jnp.zeros(ntimes)
-    # fixed_chi = (np.pi / (tsave[-1])) * jnp.ones(ntimes)
-    # drive_params_fixed_chi = jnp.vstack((
-    #     # zero_drive,
-    #     fixed_chi,
-    #     zero_drive,
-    #     zero_drive,
-    #     # zero_drive,
-    #     # zero_drive,
-    #     # zero_drive,
-    #     # zero_drive,
-    # ))
-    #
-    # def run_noisy(noise_idx, initial_states, drive_params, envelope, ts):
-    #     H_func_chi = partial(
-    #         H_func_single,
-    #         drive_params=drive_params,
-    #         envelope=envelope,
-    #         ts=ts,
-    #         noise_idx=noise_idx,
-    #     )
-    #     H_chi = timecallable(H_func_chi, )
-    #     return sesolve(H_chi, initial_states, ts, options=options).final_state
-    #
-    # f_pos = jax.vmap(partial(
-    #     run_noisy,
-    #     initial_states=initial_states,
-    #     drive_params=drive_params_fixed_chi[:, : ntimes//2],
-    #     envelope=envelope[:ntimes // 2],
-    #     ts=tsave[:ntimes//2],
-    # ), in_axes=0)
-    # result_first_half_noisy = f_pos(jnp.arange(parser_args.num_freq_shift_trajs))
-    #
-    # # fixed chi
-    #
-    # f_pos_second = jax.vmap(partial(
-    #     run_noisy,
-    #     drive_params=drive_params_fixed_chi[:, ntimes // 2:],
-    #     envelope=envelope[ntimes // 2:],
-    #     ts=tsave[ntimes // 2:],
-    # ), in_axes=(0, 0))
-    # result_second_half_fixed = f_pos_second(
-    #     jnp.arange(parser_args.num_freq_shift_trajs), result_first_half_noisy
-    # )
-    #
-    # # echoed
-    #
-    # Rx = jnp.expm1(-1j * 0.5 * np.pi * (gf_proj + dag(gf_proj)))
-    #
-    # states_after_pi = jnp.einsum("ij,...jk->...ik", Rx, result_first_half_noisy)
-    # f_neg = jax.vmap(partial(
-    #     run_noisy,
-    #     drive_params=-1*drive_params_fixed_chi[:, ntimes // 2:],
-    #     envelope=envelope[ntimes // 2:],
-    #     ts=tsave[ntimes // 2:],
-    # ), in_axes=(0, 0))
-    # result_second_half_echoed = f_neg(
-    #     jnp.arange(parser_args.num_freq_shift_trajs), states_after_pi
-    # )
-    #
-    # infid_fixed_chi = infidelity_incoherent(result_second_half_fixed, jnp.asarray(final_states))
-    # infid_echoed_chi = infidelity_incoherent(result_second_half_echoed, jnp.asarray(final_states))
-    # print(f"fidelity for the fixed chi pulse is {1-np.average(infid_fixed_chi)}")
-    # print(f"fidelity for the echoed chi pulse is {1 - np.average(infid_echoed_chi)}")
+    zero_drive = jnp.zeros(ntimes)
+    fixed_chi = (np.pi / (tsave[-1])) * jnp.ones(ntimes)
+    drive_params_fixed_chi = jnp.vstack((
+        zero_drive,
+        zero_drive,
+        fixed_chi,
+        zero_drive,
+        zero_drive,
+        # zero_drive,
+        # zero_drive,
+        # zero_drive,
+        # zero_drive,
+    ))
+
+    def run_noisy(noise_idx, initial_states, drive_params, envelope, ts):
+        H_func_chi = partial(
+            H_func_single,
+            drive_params=drive_params,
+            envelope=envelope,
+            ts=ts,
+            noise_idx=noise_idx,
+        )
+        H_chi = timecallable(H_func_chi, )
+        return sesolve(H_chi, initial_states, ts, options=options).final_state
+
+    f_pos = jax.vmap(partial(
+        run_noisy,
+        initial_states=initial_states,
+        drive_params=drive_params_fixed_chi[:, : ntimes//2],
+        envelope=envelope[:ntimes // 2],
+        ts=tsave[:ntimes//2],
+    ), in_axes=0)
+    result_first_half_noisy = f_pos(jnp.arange(parser_args.num_freq_shift_trajs))
+
+    # fixed chi
+
+    f_pos_second = jax.vmap(partial(
+        run_noisy,
+        drive_params=drive_params_fixed_chi[:, ntimes // 2:],
+        envelope=envelope[ntimes // 2:],
+        ts=tsave[ntimes // 2:],
+    ), in_axes=(0, 0))
+    result_second_half_fixed = f_pos_second(
+        jnp.arange(parser_args.num_freq_shift_trajs), result_first_half_noisy
+    )
+
+    # echoed
+
+    Rx = jnp.expm1(-1j * 0.5 * np.pi * (gf_proj + dag(gf_proj)))
+
+    states_after_pi = jnp.einsum("ij,...jk->...ik", Rx, result_first_half_noisy)
+    f_neg = jax.vmap(partial(
+        run_noisy,
+        drive_params=-1*drive_params_fixed_chi[:, ntimes // 2:],
+        envelope=envelope[ntimes // 2:],
+        ts=tsave[ntimes // 2:],
+    ), in_axes=(0, 0))
+    result_second_half_echoed = f_neg(
+        jnp.arange(parser_args.num_freq_shift_trajs), states_after_pi
+    )
+
+    infid_fixed_chi = infidelity_incoherent(result_second_half_fixed, jnp.asarray(final_states))
+    infid_echoed_chi = infidelity_incoherent(result_second_half_echoed, jnp.asarray(final_states))
+    print(f"fidelity for the fixed chi pulse is {1-np.average(infid_fixed_chi)}")
+    print(f"fidelity for the echoed chi pulse is {1 - np.average(infid_echoed_chi)}")
     #####
 
     H_tc = jax.tree_util.Partial(H_func, envelope=envelope, ts=tsave)
 
-    opt_params = grape(
-        H_tc,
-        initial_states=initial_states,
-        target_states=final_states,
-        tsave=tsave,
-        params_to_optimize=init_drive_params,
-        grape_type=parser_args.grape_type,
-        jump_ops=jump_ops,
-        target_states_traj=final_states_traj,
-        forbidden_states=forbidden_states,
-        filepath=filename,
-        optimizer=optimizer,
-        options=options,
-        init_params_to_save=parser_args.__dict__,
-    )
+    if not parser_args.analysis_only:
+        opt_params = grape(
+            H_tc,
+            initial_states=initial_states,
+            target_states=final_states,
+            tsave=tsave,
+            params_to_optimize=init_drive_params,
+            grape_type=parser_args.grape_type,
+            jump_ops=jump_ops,
+            target_states_traj=final_states_traj,
+            filepath=filename,
+            optimizer=optimizer,
+            options=options,
+            init_params_to_save=parser_args.__dict__,
+            rng_seed=parser_args.rng_seed,
+        )
+    else:
+        opt_params = init_drive_params
 
     if parser_args.plot:
 
@@ -363,14 +403,15 @@ if __name__ == "__main__":
 
         fig, ax = plt.subplots()
         for drive_idx in range(len(H1)):
-            plt.plot(finer_times, drive_amps[drive_idx]/(2.0*np.pi), label=f"I_{drive_idx}")
-            plt.plot(finer_times, init_drive_amps[drive_idx]/(2.0*np.pi), label=f"I_{drive_idx}_init")
+            plt.plot(finer_times, drive_amps[drive_idx]/(2.0*np.pi), label=H1_labels[drive_idx])
+            # plt.plot(finer_times, init_drive_amps[drive_idx]/(2.0*np.pi), label=f"I_{drive_idx}_init")
         plt.plot(finer_times, (np.pi / (2.0 * np.pi * tsave[-1])) * jnp.ones_like(finer_times),
                  ls="--", color="black", label="chi")
         plt.plot(finer_times, (-np.pi / (2.0 * np.pi * tsave[-1])) * jnp.ones_like(finer_times),
                  ls="--", color="black")
         ax.set_xlabel("time [ns]")
         ax.set_ylabel("pulse amplitude [GHz]")
+        ax.set_title(filename)
         ax.legend()
         plt.tight_layout()
         plt.savefig(filename[:-5]+"_pulse.pdf")
@@ -410,9 +451,25 @@ if __name__ == "__main__":
         labels = X_labels + Y_labels + Z_labels
 
         if parser_args.grape_type == "jumps":
-            result = mcsolve(H_tc, jump_ops, initial_states, finer_times, exp_ops=exp_ops)
+            result = mcsolve(H_tc, jump_ops, initial_states,
+                             finer_times, exp_ops=exp_ops, options=options)
+            final_jump_states = unit(result.final_jump_states).swapaxes(-4, -3)
+            final_no_jump_states = unit(result.final_no_jump_state)
+            infids_jump = infidelity_incoherent(
+                final_jump_states, jnp.asarray(final_states_traj)
+            )
+            infids_jump_avg = jnp.mean(infids_jump)
+            infids_no_jump = infidelity_incoherent(
+                final_no_jump_states, jnp.asarray(final_states)
+            )
+            print(f"final average jump fidelity is {1-infids_jump_avg}")
+            print(f"final average no-jump fidelity is {1-infids_no_jump}")
         else:
             result = sesolve(H_tc, initial_states, finer_times, exp_ops=exp_ops)
+            infid = infidelity_incoherent(
+                result.final_state, jnp.asarray(final_states)
+            )
+            print(f"final fidelity is {1-infid}")
 
         for state_idx in range(len(initial_states)):
             fig, ax = plt.subplots()
