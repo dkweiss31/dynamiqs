@@ -199,16 +199,9 @@ def _mcsolve(
     random_numbers = jax.random.uniform(key_2, shape=(ntraj,), minval=p_nojump)
     # run all single trajectories at once
     traj_keys = jax.random.split(key_3, num=ntraj)
-    if options.one_jump_only:
-        f = jax.vmap(
-            one_jump_only,
-            in_axes=(None, None, None, None, 0, 0, None, None, None, None),
-        )
-    else:
-        f = jax.vmap(
-            loop_over_jumps,
-            in_axes=(None, None, None, None, 0, 0, None, None, None, None),
-        )
+    in_axes = (None, None, None, None, 0, 0, None, None, None, None)
+    jump_fun = one_jump_only if options.one_jump_only else loop_over_jumps
+    f = jax.vmap(jump_fun, in_axes=in_axes)
     jump_results, jump_times, num_jumps = f(
         H,
         jump_ops,
@@ -227,7 +220,9 @@ def _mcsolve(
         avg_expects = p_nojump * no_jump_expects + (1 - p_nojump) * jump_expects
     else:
         avg_expects = None
-    mcresult = MCResult(tsave, no_jump_result, jump_results, p_nojump, jump_times, num_jumps, avg_expects)
+    mcresult = MCResult(
+        tsave, no_jump_result, jump_results, p_nojump, jump_times, num_jumps, avg_expects
+    )
     return mcresult
 
 
@@ -278,7 +273,7 @@ def one_jump_only(
     new_psi0 = before_jump_result.final_state
     new_tsave = jnp.linspace(new_t0, tsave[-1], len(tsave))
     # don't allow another jump
-    after_jump_result = _jump_trajs(
+    after_jump_result, _ = _jump_trajs(
         H, jump_ops, new_psi0, new_tsave, key_2, 0.0, exp_ops, solver, gradient, options
     )
     result = interpolate_states_and_expects(
