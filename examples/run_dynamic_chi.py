@@ -37,13 +37,13 @@ if __name__ == "__main__":
     parser.add_argument("--Kerr", default=0.100, type=float, help="transmon Kerr in GHz")
     parser.add_argument(
         "--max_amp",
-        default=[0.002, 0.002, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05],
+        default=[0.002, 0.002, 0.05, 0.05],
         # default=[0.001, 0.05, 0.05],
         help="max drive amp in GHz"
     )
     parser.add_argument(
         "--scale",
-        default=[0.0, 1e-2, 1e-3, 1e-3, 1e-5, 1e-5, 1e-5, 1e-5],
+        default=[0.0, 1e-2, 1e-3, 1e-3],
         help="randomization scale for initial pulse")
     parser.add_argument("--dt", default=40.0, type=float, help="time step for controls")
     parser.add_argument("--time", default=520.0, type=float, help="gate time")
@@ -54,25 +54,25 @@ if __name__ == "__main__":
     parser.add_argument("--coherent", default=0, type=int, help="which fidelity metric to use")
     parser.add_argument("--epochs", default=2000, type=int, help="number of epochs")
     parser.add_argument("--target_fidelity", default=0.990, type=float, help="target fidelity")
-    parser.add_argument("--rng_seed", default=730, type=int, help="rng seed for random initial pulses")  # 87336259
+    parser.add_argument("--rng_seed", default=430, type=int, help="rng seed for random initial pulses")  # 87336259
     parser.add_argument("--include_low_frequency_noise", default=1, type=int,
                         help="whether to batch over different realizations of low-frequency noise")
-    parser.add_argument("--num_freq_shift_trajs", default=51, type=int,
+    parser.add_argument("--num_freq_shift_trajs", default=1, type=int,
                         help="number of trajectories to sample low-frequency noise for")
     parser.add_argument("--sample_rate", default=1.0, type=float, help="rate at which to sample noise (in us^-1)")
-    parser.add_argument("--relative_PSD_strength", default=1e-8, type=float,
+    parser.add_argument("--relative_PSD_strength", default=5e-6, type=float,
                         help="std-dev of frequency shifts given by sqrt(relative_PSD_strength * sample_rate)")
     parser.add_argument("--f0", default=1e-3, type=float, help="cutoff frequency for 1/f noise (in us^-1)")
     parser.add_argument("--white", default=0, type=int, help="white or 1/f noise")
     parser.add_argument("--T1", default=10000, type=float, help="T1 of the transmon in ns. If not infinity, "
                                                                  "includes jumps")
-    parser.add_argument("--ntraj", default=2, type=int, help="number of jump trajectories")
+    parser.add_argument("--ntraj", default=31, type=int, help="number of jump trajectories")
     parser.add_argument("--plot", default=True, type=bool, help="plot the results?")
     parser.add_argument("--plot_noise", default=False, type=bool, help="plot noise information")
     parser.add_argument("--initial_pulse_filepath",
-                        default="out/00149_dynamic_chi_error_parity_plus_gf.h5py",
+                        default="out/00173_dynamic_chi_error_parity_plus_gf.h5py",
                         type=str, help="initial pulse filepath")
-    parser.add_argument("--analysis_only", default=True, type=bool,
+    parser.add_argument("--analysis_only", default=False, type=bool,
                         help="whether to actually run the grape optimization or "
                              "just analyze a pulse from initial_pulse_filepath")
     parser_args = parser.parse_args()
@@ -120,19 +120,13 @@ if __name__ == "__main__":
     elif parser_args.drive_type == "chi_gef":
         H0 = 0.0 * b
         H1 = [
-            # dag(a) @ a @ g_proj,
             dag(a) @ a @ e_proj,
             dag(a) @ a @ f_proj,
             gf_proj + dag(gf_proj), 1j * (gf_proj - dag(gf_proj)),
-            ge_proj + dag(ge_proj), 1j * (ge_proj - dag(ge_proj)),
-            ef_proj + dag(ef_proj), 1j * (ef_proj - dag(ef_proj)),
         ]
         H1_labels = [
-            # r"$\chi_g$",
             r"$\chi_e$", r"$\chi_f$",
             r"$I_{gf}$", r"$Q_{gf}$",
-            r"$I_{ge}$", r"$Q_{ge}$",
-            r"$I_{ef}$", r"$Q_{ef}$"
         ]
     elif parser_args.drive_type == "gbs":
         pass
@@ -321,10 +315,6 @@ if __name__ == "__main__":
         fixed_chi,
         zero_drive,
         zero_drive,
-        zero_drive,
-        zero_drive,
-        zero_drive,
-        zero_drive,
     ))
     envelope_fixed_chi = jnp.concatenate(
         (begin_ramp, jnp.ones(ntimes_fixed_chi - 2 * parser_args.ramp_nts), jnp.flip(begin_ramp))
@@ -462,15 +452,20 @@ if __name__ == "__main__":
                 "infid_jump": np.average(infids_jump),
                 "infid_no_jump": np.average(infids_no_jump),
             }
-            infid_filename = generate_file_path("h5py", f"analysis_infid", "out")
-            print(f"writing infid data to {infid_filename}")
-            write_to_h5_multi(infid_filename, infid_dict, parser_args.__dict__)
         else:
             result = sesolve(H_tc, initial_states, finer_times, exp_ops=exp_ops)
             infid = infidelity_incoherent(
                 result.final_state, jnp.asarray(final_states)
             )
-            print(f"final fidelity is {1-infid}")
+            infid_dict = {
+                "infid_echo": np.average(infid_echoed_chi),
+                "infid_fixed": np.average(infid_fixed_chi),
+                "infid_sesolve": np.average(infid),
+            }
+            print(f"final fidelity is {1-np.average(infid)}")
+        infid_filename = generate_file_path("h5py", f"analysis_infid", "out")
+        print(f"writing infid data to {infid_filename}")
+        write_to_h5_multi(infid_filename, infid_dict, parser_args.__dict__)
 
         #####
         # plot the fixed and echoed chi results
@@ -489,8 +484,9 @@ if __name__ == "__main__":
                      result_second_half_echoed.expects[idx, 0, 0, :],)
                 ), ls="-"
             )
+            plt.plot(finer_times, result.expects[idx, 0, 0, :], ls="-.")
         # ax.legend()
-        ax.set_title(infid_filename)
+        ax.set_title(infid_filename + "\n" + "cavity in 0" + "\n" + "solid: echo, dashed: fixed, dash-dot: OCT")
         ax.set_ylabel(r"$\langle X \rangle$")
         ax.set_xlabel("time [ns]")
         plt.show()
@@ -509,8 +505,9 @@ if __name__ == "__main__":
                      result_second_half_echoed.expects[idx, 3, 1, :],)
                 ), ls="-"
             )
+            plt.plot(finer_times, result.expects[idx, 3, 1, :], ls="-.")
         # ax.legend()
-        ax.set_title(infid_filename)
+        ax.set_title(infid_filename + "\n" + "cavity in 1" + "\n" + "solid: echo, dashed: fixed, dash-dot: OCT")
         ax.set_ylabel(r"$\langle X \rangle$")
         ax.set_xlabel("time [ns]")
         plt.show()
