@@ -57,22 +57,23 @@ if __name__ == "__main__":
     parser.add_argument("--rng_seed", default=430, type=int, help="rng seed for random initial pulses")  # 87336259
     parser.add_argument("--include_low_frequency_noise", default=1, type=int,
                         help="whether to batch over different realizations of low-frequency noise")
-    parser.add_argument("--num_freq_shift_trajs", default=1, type=int,
+    parser.add_argument("--num_freq_shift_trajs", default=51, type=int,
                         help="number of trajectories to sample low-frequency noise for")
-    parser.add_argument("--sample_rate", default=1.0, type=float, help="rate at which to sample noise (in us^-1)")
+    parser.add_argument("--sample_rate", default=1.0, type=float, help="rate at which to sample noise (in ns^-1)")
     parser.add_argument("--relative_PSD_strength", default=5e-6, type=float,
                         help="std-dev of frequency shifts given by sqrt(relative_PSD_strength * sample_rate)")
-    parser.add_argument("--f0", default=1e-3, type=float, help="cutoff frequency for 1/f noise (in us^-1)")
+    parser.add_argument("--f0", default=1.0/100_000.0, type=float,
+                        help="cutoff frequency for 1/f noise (in ns^-1), default is 1/100 us")
     parser.add_argument("--white", default=0, type=int, help="white or 1/f noise")
     parser.add_argument("--T1", default=10000, type=float, help="T1 of the transmon in ns. If not infinity, "
                                                                  "includes jumps")
-    parser.add_argument("--ntraj", default=31, type=int, help="number of jump trajectories")
+    parser.add_argument("--ntraj", default=81, type=int, help="number of jump trajectories")
     parser.add_argument("--plot", default=True, type=bool, help="plot the results?")
     parser.add_argument("--plot_noise", default=False, type=bool, help="plot noise information")
     parser.add_argument("--initial_pulse_filepath",
-                        default="out/00173_dynamic_chi_error_parity_plus_gf.h5py",
+                        default="out/00180_dynamic_chi_error_parity_plus_gf.h5py",
                         type=str, help="initial pulse filepath")
-    parser.add_argument("--analysis_only", default=False, type=bool,
+    parser.add_argument("--analysis_only", default=True, type=bool,
                         help="whether to actually run the grape optimization or "
                              "just analyze a pulse from initial_pulse_filepath")
     parser_args = parser.parse_args()
@@ -192,8 +193,8 @@ if __name__ == "__main__":
             std_dev_trajectory = np.std(traj, axis=-1)
             fig, ax = plt.subplots()
             plt.loglog(freq_list, psd)
-            plt.ylabel(r"Power spectral density [$\mu$s$^{-1}$]")
-            plt.xlabel("Noise frequency [MHz]")
+            plt.ylabel(r"Power spectral density [ns$^{-1}$]")
+            plt.xlabel("Noise frequency [Ghz]")
             plt.grid()
             plt.tight_layout()
             plt.show()
@@ -206,7 +207,7 @@ if __name__ == "__main__":
             plt.plot(noise_t_list, std_dev_trajectory, 'k', label=r'Trajectory std. dev.')
             plt.plot(noise_t_list, -std_dev_trajectory, 'k')
             plt.title('1/f noise trajectories', pad=10)
-            plt.xlabel(r"Time [$\mu$s]", labelpad=12)
+            plt.xlabel(r"Time [ns]", labelpad=12)
             plt.ylabel(r"Phase shift / $2\pi$", labelpad=12)
             plt.legend(loc='upper left')
             plt.tight_layout()
@@ -434,8 +435,8 @@ if __name__ == "__main__":
         H_tc = timecallable(H_func, )
 
         if parser_args.grape_type == "jumps":
-            result = mcsolve(H_tc, jump_ops, initial_states,
-                             finer_times, exp_ops=exp_ops, options=options)
+            result = mcsolve(H_tc, jump_ops, initial_states, finer_times,
+                             key=PRNGKey(parser_args.rng_seed), exp_ops=exp_ops, options=options)
             final_jump_states = unit(result.final_jump_states).swapaxes(-4, -3)
             final_no_jump_states = unit(result.final_no_jump_state)
             infids_jump = infidelity_incoherent(

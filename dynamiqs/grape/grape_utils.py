@@ -22,7 +22,7 @@ def generate_noise_trajectory(
               frequency list, and the effective power spectral density in this instance
     """
     key = PRNGKey(rng_seed)
-    low_pass_filter = lambda x, x0, order: 1. / jnp.sqrt(1 + jnp.power(x / x0, 2 * order))  # Low pass filter of arbitrary order, order=1 implies 1/f noise
+    low_pass_filter = lambda x, x0, order: 1. / jnp.sqrt(1 + jnp.abs(jnp.power(x / x0, order)))  # Low pass filter of arbitrary order, order=1 implies 1/f noise
     all_pass_filter = lambda x, x0, order: 1
     N = int(sample_rate * t_max) + 1  # total number of time points
     t_list = jnp.linspace(0, t_max, N)  # Time list
