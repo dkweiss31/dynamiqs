@@ -38,7 +38,7 @@ from ..sesolve.diffrax_integrator import (
     SESolveKvaerno5Integrator,
     SESolveTsit5Integrator,
 )
-from ..sesolve.propagator_integrator import SESolvePropagatorIntegrator
+from ..sesolve.expm_integrator import SESolveExpmIntegrator
 
 
 def sesolve(
@@ -183,7 +183,7 @@ def _sesolve(
         Tsit5: SESolveTsit5Integrator,
         Kvaerno3: SESolveKvaerno3Integrator,
         Kvaerno5: SESolveKvaerno5Integrator,
-        Propagator: SESolvePropagatorIntegrator,
+        Propagator: SESolveExpmIntegrator,
     }
     integrator_class = get_integrator_class(integrators, solver)
 

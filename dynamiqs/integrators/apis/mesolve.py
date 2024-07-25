@@ -41,7 +41,7 @@ from ..mesolve.diffrax_integrator import (
     MESolveKvaerno5Integrator,
     MESolveTsit5Integrator,
 )
-from ..mesolve.propagator_integrator import MESolvePropagatorIntegrator
+from ..mesolve.expm_integrator import MESolveExpmIntegrator
 from ..mesolve.rouchon_integrator import MESolveRouchon1Integrator
 
 
@@ -215,7 +215,7 @@ def _mesolve(
         Tsit5: MESolveTsit5Integrator,
         Kvaerno3: MESolveKvaerno3Integrator,
         Kvaerno5: MESolveKvaerno5Integrator,
-        Propagator: MESolvePropagatorIntegrator,
+        Propagator: MESolveExpmIntegrator,
     }
     integrator_class = get_integrator_class(integrators, solver)
 
