@@ -45,7 +45,8 @@ dev = [
 ]
 
 [tool.ruff]
-extend-include = ["*.ipynb"]
+# extend-include = ["*.ipynb"]
+exclude = ["examples/*.py", "floquet"]
 
 [tool.ruff.format]
 quote-style = "single"
