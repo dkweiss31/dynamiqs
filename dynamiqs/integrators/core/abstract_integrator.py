@@ -11,7 +11,7 @@ from jaxtyping import PyTree, Scalar
 from ..._utils import _concatenate_sort
 from ...gradient import Gradient
 from ...options import Options
-from ...result import MEResult, Result, Saved, SEResult, FinalSaved, MCResult
+from ...result import MEResult, Result, Saved, SEResult, SEPropagatorResult, FinalSaved, MCResult
 from ...solver import Solver
 from ...time_array import TimeArray
 from ...utils.utils import expect, unit
@@ -105,3 +105,10 @@ class MCSolveIntegrator(BaseIntegrator):
 
     def save(self, y: PyTree) -> Saved:
         return super().save(unit(y))
+
+
+class SEPropagatorIntegrator(BaseIntegrator):
+    def result(self, saved: Saved, infos: PyTree | None = None) -> Result:
+        return SEPropagatorResult(
+            self.ts, self.solver, self.gradient, self.options, saved, infos
+        )
