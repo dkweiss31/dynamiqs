@@ -11,7 +11,7 @@ from jaxtyping import PyTree, Scalar
 from ..._utils import _concatenate_sort
 from ...gradient import Gradient
 from ...options import Options
-from ...result import MEResult, Result, Saved, SEResult
+from ...result import MEResult, Result, Saved, SEResult, FinalSaved, MCResult
 from ...solver import Solver
 from ...time_array import TimeArray
 from ...utils.utils import expect, unit
@@ -95,7 +95,8 @@ class MESolveIntegrator(BaseIntegrator):
         ts = [x.discontinuity_ts for x in [self.H, *self.Ls]]
         return _concatenate_sort(*ts)
 
-class MCSolver(BaseSolver):
+
+class MCSolveIntegrator(BaseIntegrator):
     Ls: list[Array | TimeArray] | None = None
     rand: float = 0.0
 
