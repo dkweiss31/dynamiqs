@@ -57,7 +57,7 @@ if __name__ == "__main__":
     parser.add_argument("--rng_seed", default=430, type=int, help="rng seed for random initial pulses")  # 87336259
     parser.add_argument("--include_low_frequency_noise", default=1, type=int,
                         help="whether to batch over different realizations of low-frequency noise")
-    parser.add_argument("--num_freq_shift_trajs", default=50, type=int,
+    parser.add_argument("--num_freq_shift_trajs", default=5, type=int,
                         help="number of trajectories to sample low-frequency noise for")
     parser.add_argument("--sample_rate", default=1.0, type=float, help="rate at which to sample noise (in ns^-1)")
     parser.add_argument("--relative_PSD_strength", default=1e-5, type=float,
@@ -69,11 +69,11 @@ if __name__ == "__main__":
                                                                  "includes jumps")
     parser.add_argument("--ntraj", default=4, type=int, help="number of jump trajectories")
     parser.add_argument("--plot", default=True, type=bool, help="plot the results?")
-    parser.add_argument("--plot_noise", default=True, type=bool, help="plot noise information")
+    parser.add_argument("--plot_noise", default=False, type=bool, help="plot noise information")
     parser.add_argument("--initial_pulse_filepath",
                         default="out/00180_dynamic_chi_error_parity_plus_gf.h5py",
                         type=str, help="initial pulse filepath")
-    parser.add_argument("--analysis_only", default=True, type=bool,
+    parser.add_argument("--analysis_only", default=False, type=bool,
                         help="whether to actually run the grape optimization or "
                              "just analyze a pulse from initial_pulse_filepath")
     parser_args = parser.parse_args()
@@ -104,6 +104,7 @@ if __name__ == "__main__":
         coherent=coherent,
         ntraj=parser_args.ntraj,
         one_jump_only=True,
+        progress_meter=None,
     )
 
     a = tensor(destroy(c_dim), eye(t_dim))
@@ -236,30 +237,30 @@ if __name__ == "__main__":
             delay_times = jnp.linspace(0.0, 500, 51)
             init_state = unit(basis(3, 0) + basis(3, 2))
             readout_proj = init_state @ dag(init_state)
-            T2_Ramsey_probs = T2_Ramsey_experiment(
-                H_noise_tc,
-                init_state,
-                delay_times,
-                readout_proj,
-            )
-            X_op_half = basis(3, 0) @ dag(basis(3, 2))
-            X_op = X_op_half + dag(X_op_half)
-            # T2_echo_probs = T2_echo_experiment(
+            # T2_Ramsey_probs = T2_Ramsey_experiment(
             #     H_noise_tc,
             #     init_state,
             #     delay_times,
-            #     X_op,
             #     readout_proj,
             # )
-            gamma_phi_ramsey_exp = extract_gammaphi(
-                T2_Ramsey_probs, delay_times, type="exp"
-            )
-            gamma_phi_ramsey_gauss = extract_gammaphi(
-                T2_Ramsey_probs, delay_times, type="gauss"
-            )
-            # gamma_phi_echo = extract_gammaphi(T2_echo_probs, delay_times)
-            # print(gamma_phi_echo, gamma_phi_ramsey)
-            print("Ramsey time is: ", 1. / gamma_phi_ramsey_exp, 1./gamma_phi_ramsey_gauss)
+            # X_op_half = basis(3, 0) @ dag(basis(3, 2))
+            # X_op = X_op_half + dag(X_op_half)
+            # # T2_echo_probs = T2_echo_experiment(
+            # #     H_noise_tc,
+            # #     init_state,
+            # #     delay_times,
+            # #     X_op,
+            # #     readout_proj,
+            # # )
+            # gamma_phi_ramsey_exp = extract_gammaphi(
+            #     T2_Ramsey_probs, delay_times, type="exp"
+            # )
+            # gamma_phi_ramsey_gauss = extract_gammaphi(
+            #     T2_Ramsey_probs, delay_times, type="gauss"
+            # )
+            # # gamma_phi_echo = extract_gammaphi(T2_echo_probs, delay_times)
+            # # print(gamma_phi_echo, gamma_phi_ramsey)
+            # print("Ramsey time is: ", 1. / gamma_phi_ramsey_exp, 1./gamma_phi_ramsey_gauss)
 
     rng = np.random.default_rng(parser_args.rng_seed)
 
