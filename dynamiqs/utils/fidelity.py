@@ -32,12 +32,15 @@ def infidelity_coherent(computed_states, target_states):
     return 1 - fids
 
 
-def infidelity_incoherent(computed_states, target_states):
+def infidelity_incoherent(computed_states, target_states, average=True):
     """as above in fidelity_incoherent, but now average over the initial
     states after squaring the overlaps, erasing phase information"""
     overlaps = _overlaps(computed_states, target_states)
     overlaps_sq = jnp.abs(overlaps * jnp.conj(overlaps))
-    fids = jnp.mean(overlaps_sq, axis=-1)
+    if average:
+        fids = jnp.mean(overlaps_sq, axis=-1)
+    else:
+        fids = overlaps_sq
     return 1 - fids
 
 
