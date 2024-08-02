@@ -13,7 +13,8 @@ import equinox as eqx
 import dynamiqs
 from dynamiqs import Options, grape, timecallable, dag, tensor, basis, destroy, eye, unit, mcsolve
 from dynamiqs import generate_noise_trajectory, T2_Ramsey_experiment, T2_echo_experiment, extract_Tphi
-from dynamiqs import sesolve, unit
+from dynamiqs import sesolve, unit, pwc
+from dynamiqs.solver import Tsit5
 from dynamiqs.utils.fidelity import all_X_Y_Z_states, infidelity_incoherent
 from dynamiqs.utils.file_io import generate_file_path, extract_info_from_h5, write_to_h5_multi
 import diffrax as dx
@@ -61,21 +62,20 @@ if __name__ == "__main__":
     parser.add_argument("--rng_seed", default=980, type=int, help="rng seed for random initial pulses")  # 87336259
     parser.add_argument("--include_low_frequency_noise", default=1, type=int,
                         help="whether to batch over different realizations of low-frequency noise")
-    parser.add_argument("--num_freq_shift_trajs", default=3, type=int,
+    parser.add_argument("--num_freq_shift_trajs", default=1, type=int,
                         help="number of trajectories to sample low-frequency noise for")
     parser.add_argument("--sample_rate", default=1.0, type=float, help="rate at which to sample noise (in ns^-1)")
-    parser.add_argument("--relative_PSD_strength", default=2e-4, type=float,
+    parser.add_argument("--relative_PSD_strength", default=2e-6, type=float,
                         help="std-dev of frequency shifts given by sqrt(relative_PSD_strength * sample_rate)")
     parser.add_argument("--f0", default=1.0/100_000.0, type=float,
                         help="cutoff frequency for 1/f noise (in ns^-1), default is 1/100 us")
     parser.add_argument("--white", default=0, type=int, help="white or 1/f noise")
-    parser.add_argument("--T1", default=10000, type=float, help="T1 of the transmon in ns. If not infinity, "
-                                                                 "includes jumps")
+    parser.add_argument("--T1", default=10000, type=float, help="T1 of the transmon in ns")
     parser.add_argument("--ntraj", default=21, type=int, help="number of jump trajectories")
     parser.add_argument("--plot", default=True, type=bool, help="plot the results?")
     parser.add_argument("--plot_noise", default=True, type=bool, help="plot noise information")
     parser.add_argument("--initial_pulse_filepath",
-                        default="out/00198_dynamic_chi_error_parity_plus_gf.h5py",
+                        default="out/00199_dynamic_chi_error_parity_plus_gf.h5py",
                         type=str, help="initial pulse filepath")
     parser.add_argument("--analysis_only", default=True, type=bool,
                         help="whether to actually run the grape optimization or "
@@ -345,9 +345,25 @@ if __name__ == "__main__":
 
     #####
     ntimes_fixed_chi = 1001
+    half_idx = ntimes_fixed_chi // 2
     tsave_fixed_chi = jnp.linspace(0, parser_args.time, ntimes_fixed_chi)
     zero_drive = jnp.zeros(ntimes_fixed_chi)
-    fixed_chi = (np.pi / (tsave[-1])) * jnp.ones(ntimes_fixed_chi)
+    fixed_chi = (np.pi / (tsave_fixed_chi[-1])) * jnp.ones(ntimes_fixed_chi)
+    echoed_chi = jnp.where(
+        tsave_fixed_chi[half_idx] > tsave_fixed_chi, fixed_chi, -fixed_chi
+    )
+    n_dt = 6
+    pi_dt = tsave_fixed_chi[n_dt] - tsave_fixed_chi[0]
+    pi_amp = jnp.pi / (2 * pi_dt)
+    pi_pulse = jnp.zeros(ntimes_fixed_chi - 1)
+    for idx in range(n_dt):
+        pi_pulse = pi_pulse.at[half_idx - n_dt//2 + idx].set(pi_amp)
+    H_qubit_pi2 = pwc(
+        tsave_fixed_chi,
+        pi_pulse,
+        gf_proj + dag(gf_proj),
+    )
+
     drive_params_fixed_chi = jnp.vstack((
         # zero_drive,
         zero_drive,
@@ -355,12 +371,15 @@ if __name__ == "__main__":
         zero_drive,
         zero_drive,
     ))
+    drive_params_echoed_chi = jnp.vstack((
+        # zero_drive,
+        zero_drive,
+        echoed_chi,
+        zero_drive,
+        zero_drive,
+    ))
     envelope_fixed_chi = jnp.concatenate(
         (begin_ramp, jnp.ones(ntimes_fixed_chi - 2 * parser_args.ramp_nts), jnp.flip(begin_ramp))
-    )
-
-    options_second_half = eqx.tree_at(
-        lambda x: x.cartesian_batching, options, False, is_leaf=lambda x: x is None
     )
 
     final_states_fixed = [tensor(basis(c_dim, 0), unit(basis(t_dim, 0) + basis(t_dim, e_idx))),
@@ -377,108 +396,87 @@ if __name__ == "__main__":
         final_states_echo = all_X_Y_Z_states(final_states_echo)
         final_states_traj_echo = all_X_Y_Z_states(final_states_traj_echo)
 
-    def H_func_for_half(_H_func, mult=1.0):
-        return partial(
-            _H_func, drive_params=mult * drive_params_fixed_chi,
-            envelope=envelope_fixed_chi, ts=tsave_fixed_chi,
-        )
+    H_func_fixed = timecallable(partial(
+        H_func, drive_params=drive_params_fixed_chi,
+        envelope=envelope_fixed_chi, ts=tsave_fixed_chi,
+    ))
 
-    def H_func_second_half(t, drive_params, envelope, ts):
-        H = H_func(t, drive_params, envelope, ts)
-        # add extra broadcast dimension (since we batch over initial states,
-        # in addition to dephasing trajectories)
-        return H[:, None]
+    _H_func_echoed = timecallable(partial(
+        H_func, drive_params=drive_params_echoed_chi,
+        envelope=envelope_fixed_chi, ts=tsave_fixed_chi,
+    ))
 
-    result_first_half_noisy = sesolve(
-        timecallable(H_func_for_half(H_func, mult=1.0)), initial_states,
-        tsave_fixed_chi[:ntimes_fixed_chi//2], exp_ops=X_ops, options=options
-    )
-    result_second_half_fixed = sesolve(
-        timecallable(H_func_for_half(H_func_second_half, mult=1.0)),
-        result_first_half_noisy.final_state, tsave_fixed_chi[ntimes_fixed_chi//2:],
-        exp_ops=X_ops, options=options_second_half,
-    )
-    Rx = gf_proj + dag(gf_proj)
-    states_after_pi = jnp.einsum("ij,...jk->...ik", Rx, result_first_half_noisy.final_state)
-    result_second_half_echoed = sesolve(
-        timecallable(H_func_for_half(H_func_second_half, mult=-1.0)),
-        states_after_pi, tsave_fixed_chi[ntimes_fixed_chi//2:],
-        exp_ops=X_ops, options=options_second_half,
-    )
+    H_func_echoed = _H_func_echoed + H_qubit_pi2
 
+    result_fixed = sesolve(
+        H_func_fixed, initial_states, tsave_fixed_chi, exp_ops=X_ops, options=options
+    )
+    result_echoed = sesolve(
+        H_func_echoed, initial_states, tsave_fixed_chi, exp_ops=X_ops, options=options,
+        solver=Tsit5(max_steps=1_000_000)
+    )
     infid_fixed_chi = infidelity_incoherent(
-        result_second_half_fixed.final_state, jnp.asarray(final_states_fixed)
+        result_fixed.final_state, jnp.asarray(final_states_fixed)
     )
     infid_echoed_chi = infidelity_incoherent(
-        result_second_half_echoed.final_state, jnp.asarray(final_states_echo)
+        result_echoed.final_state, jnp.asarray(final_states_echo)
     )
-    infid_dict = {
-        "infid_coherent_echo": np.average(infid_echoed_chi),
-        "infid_coherent_fixed": np.average(infid_fixed_chi),
-    }
-    print(f"coherent fidelity for the fixed chi pulse is {1-np.average(infid_fixed_chi)}")
+    print(f"coherent fidelity for the fixed chi pulse is {1 - np.average(infid_fixed_chi)}")
     print(f"coherent fidelity for the echoed chi pulse is {1 - np.average(infid_echoed_chi)}")
-    if parser_args.grape_type == "jumps":
-        mc_result_first_half_noisy = mcsolve(
-            timecallable(H_func_for_half(H_func, mult=1.0)), jump_ops, initial_states,
-            tsave_fixed_chi[:ntimes_fixed_chi // 2], options=options
-        )
-        mc_result_second_half_nojump_fixed = mcsolve(
-            timecallable(H_func_for_half(H_func_second_half, mult=1.0)), jump_ops,
-            mc_result_first_half_noisy.final_no_jump_state, tsave_fixed_chi[ntimes_fixed_chi // 2:],
-            options=options_second_half,
-        )
-        mc_result_second_half_jump_fixed = mcsolve(
-            timecallable(H_func_for_half(H_func_second_half, mult=1.0)), jump_ops,
-            mc_result_first_half_noisy.final_jump_states, tsave_fixed_chi[ntimes_fixed_chi // 2:],
-            options=options_second_half,
-        )
-        # pi pulse leaves junmp states unaffected
-        mc_states_after_pi_nojump = jnp.einsum(
-            "ij,...jk->...ik",
-            Rx,
-            mc_result_first_half_noisy.final_no_jump_state
-        )
-        mc_result_second_half_echo = mcsolve(
-            timecallable(H_func_for_half(H_func_second_half, mult=-1.0)),
-            mc_states_after_pi, tsave_fixed_chi[ntimes_fixed_chi // 2:],
-            options=options_second_half,
-        )
+    infid_dict = {
+        "infid_coherent_fixed": np.average(infid_fixed_chi),
+        "infid_coherent_echo": np.average(infid_echoed_chi),
+    }
 
-        def _infids_fixed_or_echo(_result, _final_states, _final_states_traj):
-            _final_jump_states = unit(_result.final_jump_states).swapaxes(-4, -3)
-            _final_no_jump_states = unit(_result.final_no_jump_state)
-            _infids_jump = infidelity_incoherent(
-                _final_jump_states, jnp.asarray(_final_states_traj)
-            )
-            _infids_no_jump = infidelity_incoherent(
-                _final_no_jump_states, jnp.asarray(_final_states)
-            )
-            _p_nojump = _result.no_jump_prob
-            _infid = _p_nojump * _infids_no_jump + (1 - _p_nojump) * _infids_jump
-            return _p_nojump, _infid, _infids_no_jump, _infids_jump
+    def mcsolve_infids(_result, _final_states, _final_states_traj):
+        _final_jump_states = unit(_result.final_jump_states).swapaxes(-4, -3)
+        _final_no_jump_states = unit(_result.final_no_jump_state)
+
+        def _average_over_batches(infid_array):
+            return jnp.average(infid_array, axis=range(len(infid_array.shape) - 1))
+        _infids_jump = infidelity_incoherent(
+            _final_jump_states, jnp.asarray(_final_states_traj), average=False
+        )
+        _infids_no_jump = infidelity_incoherent(
+            _final_no_jump_states, jnp.asarray(_final_states), average=False
+        )
+        _infids_jump = _average_over_batches(_infids_jump)
+        _infids_no_jump = _average_over_batches(_infids_no_jump)
+        _p_nojump = _average_over_batches(_result.no_jump_prob)
+        _infid = _p_nojump * _infids_no_jump + (1 - _p_nojump) * _infids_jump
+        return _p_nojump, _infid, _infids_no_jump, _infids_jump
+
+    if parser_args.grape_type == "jumps":
+        mc_result_fixed = mcsolve(
+            H_func_fixed, jump_ops, initial_states, tsave_fixed_chi, options=options
+        )
+        mc_result_echoed = mcsolve(
+            H_func_echoed, jump_ops, initial_states, tsave_fixed_chi, options=options
+        )
 
         (p_nojump_fixed,
          infid_fixed,
          infids_no_jump_fixed,
-         infids_jump_fixed) = _infids_fixed_or_echo(
-            mc_result_second_half_fixed, final_states_fixed, final_states_traj_fixed
+         infids_jump_fixed) = mcsolve_infids(
+            mc_result_fixed, final_states_fixed, final_states_traj_fixed
         )
         (p_nojump_echo,
          infid_echo,
          infids_no_jump_echo,
-         infids_jump_echo) = _infids_fixed_or_echo(
-            mc_result_second_half_echo, final_states_echo, final_states_traj_echo
+         infids_jump_echo) = mcsolve_infids(
+            mc_result_echoed, final_states_echo, final_states_traj_echo
         )
-        infid_dict["p_nojump_fixed"] = p_nojump_fixed
-        infid_dict["infid_fixed"] = infid_fixed
-        infid_dict["infid_no_jump_fixed"] = infids_no_jump_fixed
-        infid_dict["infid_jump_fixed"] = infids_jump_fixed
+        print("jump infidelities for fixed and echo are ",
+              np.average(infids_jump_fixed), np.average(infids_jump_echo))
+        infid_dict["p_nojump_fixed"] = np.average(p_nojump_fixed)
+        infid_dict["infid_fixed"] = np.average(infid_fixed)
+        infid_dict["infid_no_jump_fixed"] = np.average(infids_no_jump_fixed)
+        infid_dict["infid_jump_fixed"] = np.average(infids_jump_fixed)
 
-        infid_dict["p_nojump_echo"] = p_nojump_echo
-        infid_dict["infid_echo"] = infid_echo
-        infid_dict["infid_no_jump_echo"] = infids_no_jump_echo
-        infid_dict["infid_jump_echo"] = infids_jump_echo
+        infid_dict["p_nojump_echo"] = np.average(p_nojump_echo)
+        infid_dict["infid_echo"] = np.average(infid_echo)
+        infid_dict["infid_no_jump_echo"] = np.average(infids_no_jump_echo)
+        infid_dict["infid_jump_echo"] = np.average(infids_jump_echo)
 
     H_tc = jax.tree_util.Partial(H_func, envelope=envelope, ts=tsave)
 
@@ -512,14 +510,13 @@ if __name__ == "__main__":
         fig, ax = plt.subplots()
         for drive_idx in range(len(H1)):
             plt.plot(finer_times, drive_amps[drive_idx]/(2.0*np.pi), label=H1_labels[drive_idx])
-            # plt.plot(finer_times, init_drive_amps[drive_idx]/(2.0*np.pi), label=f"I_{drive_idx}_init")
-        plt.plot(finer_times, (np.pi / (2.0 * np.pi * tsave[-1])) * jnp.ones_like(finer_times),
-                 ls="--", color="black", label="chi")
-        plt.plot(finer_times, (-np.pi / (2.0 * np.pi * tsave[-1])) * jnp.ones_like(finer_times),
-                 ls="--", color="black")
+        # plt.plot(finer_times, (np.pi / (2.0 * np.pi * tsave[-1])) * jnp.ones_like(finer_times),
+        #          ls="--", color="black", label="chi")
+        # plt.plot(finer_times, (-np.pi / (2.0 * np.pi * tsave[-1])) * jnp.ones_like(finer_times),
+        #          ls="--", color="black")
         ax.set_xlabel("time [ns]")
         ax.set_ylabel("pulse amplitude [GHz]")
-        ax.set_title(filename)
+        # ax.set_title(filename)
         ax.legend()
         plt.tight_layout()
         plt.savefig(filename[:-5]+"_pulse.pdf")
@@ -534,37 +531,29 @@ if __name__ == "__main__":
         H_tc = timecallable(H_func, )
 
         if parser_args.grape_type == "jumps":
-            opt_result = mcsolve(H_tc, jump_ops, initial_states, finer_times,
+            opt_result = mcsolve(H_tc, jump_ops, initial_states, tsave,
                                  key=PRNGKey(parser_args.rng_seed), options=options)
             plot_result = sesolve(H_tc, initial_states, finer_times,
                                   exp_ops=exp_ops, options=options)
-            final_jump_states = unit(opt_result.final_jump_states).swapaxes(-4, -3)
-            final_no_jump_states = unit(opt_result.final_no_jump_state)
-            infids_jump = infidelity_incoherent(
-                final_jump_states, jnp.asarray(final_states_traj)
-            )
-            infids_no_jump = infidelity_incoherent(
-                final_no_jump_states, jnp.asarray(final_states)
-            )
-            p_nojump = opt_result.no_jump_prob
-            infid = p_nojump * infids_no_jump + (1 - p_nojump) * infids_jump
+            (p_nojump,
+             infid,
+             infids_no_jump,
+             infids_jump) = mcsolve_infids(opt_result, final_states, final_states_traj)
             print(f"final average jump fidelity is {1-jnp.mean(infids_jump)}")
             print(f"final average no-jump fidelity is {1-jnp.mean(infids_no_jump)}")
             print(f"final weighted fidelity is {1 - jnp.mean(infid)}")
             infid_dict = infid_dict | {
-                "p_nojump": p_nojump,
+                "p_nojump": np.average(p_nojump),
                 "infid_jump": np.average(infids_jump),
                 "infid_no_jump": np.average(infids_no_jump),
-                "infid": infid,
+                "infid": np.average(infid),
             }
         else:
             plot_result = sesolve(H_tc, initial_states, finer_times, exp_ops=exp_ops)
             infid = infidelity_incoherent(
                 plot_result.final_state, jnp.asarray(final_states)
             )
-            infid_dict = {
-                "infid_echo": np.average(infid_echoed_chi),
-                "infid_fixed": np.average(infid_fixed_chi),
+            infid_dict = infid_dict | {
                 "infid_sesolve": np.average(infid),
             }
             print(f"final fidelity is {1-np.average(infid)}")
@@ -584,18 +573,8 @@ if __name__ == "__main__":
         # initial state without photon in cavity
         fig, ax = plt.subplots()
         for idx in range(parser_args.num_freq_shift_trajs):
-            plt.plot(
-                tsave_fixed_chi, jnp.concatenate(
-                    (result_first_half_noisy.expects[idx, 0, 0, :],
-                     result_second_half_fixed.expects[idx, 0, 0, :],)
-                ), ls="--"
-            )
-            plt.plot(
-                tsave_fixed_chi, jnp.concatenate(
-                    (result_first_half_noisy.expects[idx, 0, 0, :],
-                     result_second_half_echoed.expects[idx, 0, 0, :],)
-                ), ls="-"
-            )
+            plt.plot(tsave_fixed_chi, result_fixed.expects[idx, 0, 0, :], ls="--")
+            plt.plot(tsave_fixed_chi, result_echoed.expects[idx, 0, 0, :], ls="-")
             plt.plot(finer_times, plot_result.expects[idx, 0, 0, :], ls="-.")
         # ax.legend()
         ax.set_title(infid_filename + "\n" + "cavity in 0" + "\n" + "solid: echo, dashed: fixed, dash-dot: OCT")
@@ -605,18 +584,8 @@ if __name__ == "__main__":
         # initial state with photon in cavity
         fig, ax = plt.subplots()
         for idx in range(parser_args.num_freq_shift_trajs):
-            plt.plot(
-                tsave_fixed_chi, jnp.concatenate(
-                    (result_first_half_noisy.expects[idx, 3, 1, :],
-                     result_second_half_fixed.expects[idx, 3, 1, :],)
-                ), ls="--"
-            )
-            plt.plot(
-                tsave_fixed_chi, jnp.concatenate(
-                    (result_first_half_noisy.expects[idx, 3, 1, :],
-                     result_second_half_echoed.expects[idx, 3, 1, :],)
-                ), ls="-"
-            )
+            plt.plot(tsave_fixed_chi, result_fixed.expects[idx, 3, 1, :], ls="--")
+            plt.plot(tsave_fixed_chi, result_echoed.expects[idx, 3, 1, :], ls="-")
             plt.plot(finer_times, plot_result.expects[idx, 3, 1, :], ls="-.")
         # ax.legend()
         ax.set_title(infid_filename + "\n" + "cavity in 1" + "\n" + "solid: echo, dashed: fixed, dash-dot: OCT")
