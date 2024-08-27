@@ -134,8 +134,18 @@ if __name__ == "__main__":
             r"$\chi_e$", r"$\chi_f$",
             r"$I_{gf}$", r"$Q_{gf}$",
         ]
-    elif parser_args.drive_type == "gbs":
-        pass
+    elif parser_args.drive_type == "gbs_delta":
+        H0 = 0.0 * b
+        H1 = [
+            dag(a) @ b + a @ dag(b),
+            1j * (dag(a) @ b - a @ dag(b)),
+            gf_proj + dag(gf_proj),
+            1j * (gf_proj - dag(gf_proj)),
+        ]
+        H1_labels = [
+            r"$g_{\rm re}$", r"$\chi_f$",
+            r"$I_{gf}$", r"$Q_{gf}$",
+        ]
     else:
         raise ValueError(f"drive_type can be chi_ge, chi_gef,"
                          f" gbs but got {parser_args.drive_type}")
@@ -171,6 +181,7 @@ if __name__ == "__main__":
             tensor(basis(c_dim, 0), basis(t_dim, 1)),
             -1j * tensor(basis(c_dim, 1), basis(t_dim, 1))
         ]
+    # elif parser_args.gate == "e_swap_pi_4":
     else:
         raise RuntimeError("gate type not supported")
 
@@ -468,6 +479,8 @@ if __name__ == "__main__":
         )
         print("jump infidelities for fixed and echo are ",
               np.average(infids_jump_fixed), np.average(infids_jump_echo))
+        print("Weighted fidelities for fixed and echo are ",
+              1 - np.average(infid_fixed), 1 - np.average(infid_echo))
         infid_dict["p_nojump_fixed"] = np.average(p_nojump_fixed)
         infid_dict["infid_fixed"] = np.average(infid_fixed)
         infid_dict["infid_no_jump_fixed"] = np.average(infids_no_jump_fixed)
@@ -516,7 +529,7 @@ if __name__ == "__main__":
         #          ls="--", color="black")
         ax.set_xlabel("time [ns]")
         ax.set_ylabel("pulse amplitude [GHz]")
-        # ax.set_title(filename)
+        ax.set_title(filename)
         ax.legend()
         plt.tight_layout()
         plt.savefig(filename[:-5]+"_pulse.pdf")
